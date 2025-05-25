@@ -1,0 +1,15 @@
+{
+    "name": "potager/potager",
+    "description": "A small PHP MVC Framework",
+    "type": "library",
+    "autoload": {
+        "psr-4": {
+            "Potager\\": "src/"
+        }
+    },
+    "require": {
+        "php": ">=8.1",
+        "latte/latte": "^3.0",
+        "vlucas/phpdotenv": "^5.6"
+    }
+}
