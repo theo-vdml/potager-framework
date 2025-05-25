@@ -5,7 +5,12 @@
     "autoload": {
         "psr-4": {
             "Potager\\": "src/"
-        }
+        },
+        "files": [
+            "src/Helpers/path.php",
+            "src/Helpers/session.php",
+            "src/Helpers/view.php"
+        ]
     },
     "require": {
         "php": ">=8.1",

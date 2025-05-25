@@ -26,7 +26,7 @@ class LatteEngine
             }
         }
 
-        $this->latte->setTempDirectory($cachePath);
+        $this->latte->setTempDirectory($this->cachePath);
     }
 
     public function render(string $view, array $params = []): string

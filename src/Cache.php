@@ -6,7 +6,7 @@ class Cache
 {
     public static function set(string $key, mixed $data, int $duration = 86400)
     {
-        $cacheFile = __DIR__ . "/.cache/{$key}.json";
+        $cacheFile = path("/storage/.cache/{$key}.json");
 
         $content = [
             "expire" => time() + $duration,
@@ -18,7 +18,7 @@ class Cache
 
     public static function get(string $key)
     {
-        $cacheFile = __DIR__ . "/.cache/{$key}.json";
+        $cacheFile = path("/storage/.cache/{$key}.json");
         if (!file_exists($cacheFile))
             return null;
 
