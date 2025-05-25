@@ -27,9 +27,7 @@ class App
         $this->mailManager = new MailManager();
         $this->session = new Session();
 
-        $viewsPath = path("/views/");
-        $cachePath = path("@/.cache/latte/");
-        $this->latteEngine = new LatteEngine($viewsPath, $cachePath);
+        $this->latteEngine = new LatteEngine();
 
         $dsn = self::useConfig()->get('database.dsn');
         $user = self::useConfig()->get('database.user');
