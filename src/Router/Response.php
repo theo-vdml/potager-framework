@@ -48,7 +48,7 @@ class Response
 		return $this;
 	}
 
-	public function redirect(string $path = null)
+	public function redirect(?string $path = null)
 	{
 		$redirect = new Redirect($this->router);
 		$this->redirect = $redirect;
