@@ -5,7 +5,7 @@ if (!function_exists('path')) {
     function path(?string $path = null)
     {
         if (!defined('BASE_PATH'))
-            define('BASE_PATH', dirname(dirname(__DIR__)));
+            throw new RuntimeException('BASE_PATH is not defined. Please define it in your application entry point.');
 
         if (!$path)
             return BASE_PATH;
