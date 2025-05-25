@@ -1,1 +1,44 @@
-vendor
+# Composer dependencies
+/vendor/
+composer.lock
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDEs and editors
+/.idea/
+/.vscode/
+/*.code-workspace
+
+# Logs and runtime
+*.log
+*.cache
+.cache/
+logs/
+storage/
+tmp/
+
+# PHPUnit
+/phpunit.xml
+/phpunit.xml.dist
+/test-results/
+
+# Build / dist
+/build/
+/dist/
+
+# Coverage reports
+coverage/
+.clover
+.phpunit.result.cache
+
+# dotenv files (optional, if used)
+.env
+.env.*
+
+# Node (for documentation like vitepress or tooling)
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
