@@ -2,6 +2,8 @@
 
 namespace Potager\Limpid;
 
+use PDO;
+use Pixie\QueryBuilder\QueryBuilderHandler;
 use Potager\App;
 use Potager\Limpid\Attributes\Column;
 use Potager\Limpid\Attributes\Hook;
@@ -310,14 +312,14 @@ abstract class Model
 
     public static function find(int $id): static|null
     {
-        $data = static::query()->where('id', '=', $id)->first();
-        return $data ? new static($data) : null;
+        $data = static::query()->where('id', $id)->first();
+        return $data ? new static((array) $data) : null;
     }
 
     public static function findBy(string $column, string $value)
     {
-        $data = static::query()->where($column, '=', $value)->first();
-        return $data ? new static($data) : null;
+        $data = static::query()->where($column, $value)->first();
+        return $data ? new static((array) $data) : null;
     }
 
     public static function findOrFail()
@@ -407,14 +409,13 @@ abstract class Model
 
 
     /**
-     * Method that returns a QueryBuilder instance for this model table
-     * @return QueryBuilder
+     * Get a new query builder instance for the model's table.
+     *
+     * @return QueryBuilderHandler A query builder instance scoped to the model's table.
      */
-    public static function query(): QueryBuilder
+    public static function query(): QueryBuilderHandler
     {
-        $builder = static::getDatabase()->query();
-        $builder->from(static::tableName());
-        return $builder;
+        return Database::table(static::tableName());
     }
 
 
