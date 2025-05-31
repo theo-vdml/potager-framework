@@ -5,7 +5,6 @@ namespace Potager\Limpid;
 use Pixie\Connection;
 use Pixie\QueryBuilder\QueryBuilderHandler;
 use Potager\App;
-use Viocon\Container;
 
 class Database
 {
@@ -37,7 +36,7 @@ class Database
             ],
         ];
 
-        $this->connection = new Connection($pixieConfig['driver'], $pixieConfig, null, new Container());
+        $this->connection = new Connection($pixieConfig['driver'], $pixieConfig, null);
     }
 
     public function pdo()
