@@ -1,6 +1,6 @@
 <?php
 
-namespace Potager\Exception;
+namespace Potager\Exceptions;
 use Exception;
 
 class HttpException extends Exception
