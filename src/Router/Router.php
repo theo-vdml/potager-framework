@@ -2,8 +2,7 @@
 
 namespace Potager\Router;
 
-use Potager\App;
-use Potager\Exception\HttpException;
+use Potager\Exceptions\HttpException;
 use Potager\View;
 use Exception;
 use Throwable;

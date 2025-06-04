@@ -2,34 +2,25 @@
 
 namespace Potager;
 
+use Potager\Container\Container;
 use Potager\Grape\Grape;
-use Potager\Mailer\MailManager;
-use Potager\Router\Router;
-use Potager\Limpid\Database;
-use Potager\Session;
-use Potager\LatteEngine;
 
 class App
 {
 
-    protected static App $app;
+    protected static ?App $instance = null;
+    protected ?Container $container = null;
+
     protected Config $config;
-    protected Router $router;
-    protected Database $database;
-    protected MailManager $mailManager;
-    protected Session $session;
-    protected LatteEngine $latteEngine;
+
 
     public function __construct()
     {
-        self::$app = $this;
         $this->config = new Config();
-        $this->router = new Router();
-        $this->database = new Database();
-        $this->mailManager = new MailManager();
-        $this->session = new Session();
 
-        $this->latteEngine = new LatteEngine();
+        $this->container = new Container();
+        $this->registerServices();
+
 
         $dsn = self::useConfig()->get('database.dsn');
         $user = self::useConfig()->get('database.user');
@@ -37,9 +28,46 @@ class App
         Grape::connectMySQL($dsn, $user, $password);
     }
 
-    public static function getInstance()
+
+    protected function registerServices()
     {
-        return self::$app;
+        if (!$this->container) {
+            throw new \Exception("Cannot register services without a container set");
+        }
+
+        // Register Router as singleton
+        $this->container->singleton('router', function ($container): \Potager\Router\Router {
+            return new \Potager\Router\Router();
+        });
+
+        // Register Session as singleton
+        $this->container->singleton('session', function ($container): \Potager\Session {
+            return new \Potager\Session();
+        });
+
+        // Register Mail Manager as singleton
+        $this->container->singleton('mailer', function ($container): \Potager\Mailer\MailManager {
+            return new \Potager\Mailer\MailManager();
+        });
+
+        // Register Database as sigleton
+        $this->container->singleton('database', function ($container): \Potager\Limpid\Database {
+            return new \Potager\Limpid\Database();
+        });
+
+        // Register Latte Engine
+        $this->container->bind('latteEngine', function ($container): \Potager\LatteEngine {
+            return new \Potager\LatteEngine();
+        });
+    }
+
+
+    public static function getInstance(): App
+    {
+        if (self::$instance === null) {
+            self::$instance = new self();
+        }
+        return self::$instance;
     }
 
     public function getConfig(): Config
@@ -47,64 +75,64 @@ class App
         return $this->config;
     }
 
-    public function getDatabase(): Database
+    public function getDatabase(): \Potager\Limpid\Database
     {
-        return $this->database;
+        return $this->container->get('database');
     }
 
-    public function getRouter(): Router
+    public function getRouter(): \Potager\Router\Router
     {
-        return $this->router;
+        return $this->container->get('router');
     }
 
-    public function getMailer(): MailManager
+    public function getMailer(): \Potager\Mailer\MailManager
     {
-        return $this->mailManager;
+        return $this->container->get('mailer');
     }
 
     public function getSession(): Session
     {
-        return $this->session;
+        return $this->container->get('session');
     }
 
     public function getLatteEngine()
     {
-        return $this->latteEngine;
+        return $this->container->get('latteEngine');
     }
 
     public static function useApp()
     {
-        return self::$app;
+        return self::getInstance();
     }
 
     public static function useConfig(): Config
     {
-        return self::$app->getConfig();
+        return self::getInstance()->getConfig();
     }
 
     public static function useDatabase()
     {
-        return self::$app->getDatabase();
+        return self::getInstance()->getDatabase();
     }
 
     public static function useRouter()
     {
-        return self::$app->getRouter();
+        return self::getInstance()->getRouter();
     }
 
     public static function useMail()
     {
-        return self::$app->getMailer();
+        return self::getInstance()->getMailer();
     }
 
     public static function useSession()
     {
-        return self::$app->getSession();
+        return self::getInstance()->getSession();
     }
 
     public static function useLatte()
     {
-        return self::$app->getLatteEngine();
+        return self::getInstance()->getLatteEngine();
     }
 
 }
