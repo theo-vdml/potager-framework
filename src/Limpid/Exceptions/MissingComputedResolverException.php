@@ -8,6 +8,9 @@ class MissingComputedResolverException extends Exception
 {
     public function __construct(string $model, string $property, string $method)
     {
-        parent::__construct("Missing computed resolver method for '{$property}' in model '{$model}'. Expected method: $method()");
+        parent::__construct(
+            "Missing resolver method '{$method}()' for computed property '{$property}' in model '{$model}'. " .
+            "Ensure the method exists and is public."
+        );
     }
 }

@@ -6,6 +6,8 @@ use Potager\Grape\Grape;
 use Potager\Mailer\MailManager;
 use Potager\Router\Router;
 use Potager\Limpid\Database;
+use Potager\Session;
+use Potager\LatteEngine;
 
 class App
 {

@@ -18,7 +18,7 @@ class Config
 
         $config = require $file;
         if (!is_array($config))
-            throw new \Exception("Error in config file at $jsonFile");
+            throw new \Exception("Error in config file at $file");
         $this->config = $config;
     }
 
