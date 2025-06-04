@@ -4,7 +4,7 @@ namespace Potager\Limpid\Attributes;
 
 use Attribute;
 
-#[Attribute(Attribute::TARGET_METHOD | Attribute::IS_REPEATABLE)]
+#[Attribute(Attribute::TARGET_METHOD)]
 class Hook
 {
     /**
@@ -15,5 +15,15 @@ class Hook
     {
         if (is_string($this->events))
             $this->events = [$events];
+    }
+
+    public function getEvents()
+    {
+        return $this->events;
+    }
+
+    public function getPriority()
+    {
+        return $this->priority;
     }
 }

@@ -6,10 +6,13 @@ use Attribute;
 #[Attribute(Attribute::TARGET_PROPERTY)]
 class Computed
 {
-    public ?string $resolver;
+    public function __construct(
+        protected ?string $resolver = null
+    ) {
+    }
 
-    public function __construct(?string $resolver = null)
+    public function getResolver(): string|null
     {
-        $this->resolver = $resolver;
+        return $this->resolver;
     }
 }

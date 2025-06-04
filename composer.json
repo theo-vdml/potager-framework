@@ -12,9 +12,25 @@
             "src/Helpers/view.php"
         ]
     },
+    "repositories": [
+        {
+            "type": "git",
+            "url": "https://github.com/theo-vdml/pixie-potager.git"
+        }
+    ],
     "require": {
         "php": ">=8.1",
         "latte/latte": "^3.0",
-        "vlucas/phpdotenv": "^5.6"
+        "vlucas/phpdotenv": "^5.6",
+        "potager/pixie": "dev-master"
+
+    },
+    "require-dev": {
+        "pestphp/pest": "^3.8"
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
     }
 }
