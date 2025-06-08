@@ -2,20 +2,29 @@
 
 namespace Potager\Limpid\Boot;
 
+use DateTime;
+use Exception;
 use Potager\Limpid\Attributes\Table;
+use Potager\Limpid\Contracts\DataTransformer;
 use Potager\Limpid\Definitions\ColumnDefinition;
 use Potager\Limpid\Definitions\ComputedDefinition;
 use Potager\Limpid\Definitions\ModelDefinition;
 use Potager\Limpid\Exceptions\DuplicateColumnException;
 use Potager\Limpid\Exceptions\InvalidAttributeCombinationException;
 use Potager\Limpid\Exceptions\InvalidBootMethodException;
+use Potager\Limpid\Exceptions\InvalidColumnMethodException;
 use Potager\Limpid\Exceptions\InvalidComputedResolverVisibilityException;
 use Potager\Limpid\Exceptions\MissingComputedResolverException;
 use Potager\Limpid\Attributes\Column;
 use Potager\Limpid\Attributes\Computed;
 use Potager\Limpid\Attributes\Hook;
+use Potager\Limpid\Exceptions\MissingPrimaryKeyException;
 use Potager\Limpid\Exceptions\MultiplePrimaryKeyException;
 use Potager\Limpid\Model;
+use Potager\Limpid\Transformers\ArrayTransformer;
+use Potager\Limpid\Transformers\BooleanTransformer;
+use Potager\Limpid\Transformers\DateTimeTransformer;
+use Potager\Limpid\Transformers\DefaultTransformer;
 use Potager\Support\Str;
 use Potager\Support\Utils;
 use ReflectionClass;
@@ -83,6 +92,7 @@ class ModelBooter
          * - #[Computed]: Registered in $meta->computeds as ComputedMeta
          *   - Resolver method is required (explicit or inferred)
          *   - Missing resolvers will throw MissingComputedResolverException
+         * - Ensure there is a primary key
          */
 
         $primaryKeyAssigned = false;
@@ -102,21 +112,18 @@ class ModelBooter
             if (isset($attrs[Column::class])) {
                 /** @var Column $column */
                 $column = $attrs[Column::class]();
-                if (isset($meta->columns[$propertyName])) {
-                    throw new DuplicateColumnException($modelClass, $propertyName);
+                $definition = static::processColumnAttribute($reflection, $propertyName, $propertyType, $column);
+                if ($meta->hasColumn($definition->name)) {
+                    $existing = $meta->getColumn($definition->name);
+                    throw new DuplicateColumnException($modelClass, $existing->property, $propertyName, $definition->name);
                 }
-                if ($column->isPrimary()) {
-                    if ($primaryKeyAssigned) {
-                        throw new MultiplePrimaryKeyException($modelClass, $meta->primary, $propertyName);
-                    }
+                if ($definition->isPrimary) {
+                    if ($primaryKeyAssigned)
+                        throw new MultiplePrimaryKeyException($modelClass, $meta->primary->property, $propertyName);
                     $primaryKeyAssigned = true;
-                    $meta->primary = $propertyName;
+                    $meta->primary = $definition;
                 }
-                $meta->columns[$propertyName] = new ColumnDefinition(
-                    name: $propertyName,
-                    type: $propertyType,
-                    isPrimary: $column->isPrimary()
-                );
+                $meta->columns[$propertyName] = $definition;
             }
             // Handle #[Computed] attribute
             else if (isset($attrs[Computed::class])) {
@@ -136,6 +143,20 @@ class ModelBooter
                     resolver: $resolver
                 );
             }
+        }
+
+        /**
+         * Ensure the model has a primary key assigned.
+         * If no primary key is explicitly assigned, check for the default 'id' column.
+         * Throws an exception if the 'id' column is not found.
+         * Sets the primary key to the 'id' column if it exists.
+         */
+        if (!$primaryKeyAssigned) {
+            if (!$meta->hasColumn('id')) {
+                throw new MissingPrimaryKeyException();
+            }
+            $meta->primary = $meta->getColumn('id');
+            $meta->primary->isPrimary = true; // Ensure primary flag is set
         }
 
         /**
@@ -221,6 +242,85 @@ class ModelBooter
          */
         return $meta;
     }
+
+    /**
+     * Processes a property annotated with a Column attribute and returns its corresponding ColumnDefinition.
+     *
+     * @param ReflectionClass $reflection The reflection of the class containing the property.
+     * @param string $property The name of the property being processed.
+     * @param string $type The type of the property (e.g., 'int', 'string', 'DateTime', etc.).
+     * @param Column $column The Column attribute instance attached to the property.
+     *
+     * @return ColumnDefinition The generated ColumnDefinition based on the provided metadata.
+     *
+     * @throws Exception If the 'prepare' or 'consume' method is defined but not public and non-static.
+     */
+    protected static function processColumnAttribute(ReflectionClass $reflection, string $property, string $type, Column $column): ColumnDefinition
+    {
+        // Determine the column name to use in the database, defaulting to snake_case version of the property name
+        $name = $column->name ?? Str::toSnakeCase($property);
+        // Validate the 'prepare' method: it must exist and be a public, non-static method
+        if ($column->prepare && !static::isPublicNonStaticMethodDefined($reflection, $column->prepare)) {
+            throw InvalidColumnMethodException::prepareMethodNotCallable($property, $column->prepare);
+        }
+        // Validate the 'consume' method: it must exist and be a public, non-static method
+        if ($column->consume && !static::isPublicNonStaticMethodDefined($reflection, $column->consume)) {
+            throw InvalidColumnMethodException::consumeMethodNotCallable($property, $column->consume);
+        }
+        // Build and return the ColumnDefinition object with appropriate metadata
+        return new ColumnDefinition(
+            name: $name,
+            property: $property,
+            type: $type,
+            isPrimary: $column->isPrimary(),
+            prepare: $column->prepare,
+            consume: $column->consume,
+            transformer: $column->transformer ?? static::getDefaultTransformer($type)
+        );
+    }
+
+    /**
+     * Checks whether the given method exists on the class and is both public and non-static.
+     *
+     * @param ReflectionClass $reflection The reflection instance of the class to inspect.
+     * @param string $method The name of the method to check.
+     *
+     * @return bool True if the method exists, is public, and is not static; false otherwise.
+     */
+    protected static function isPublicNonStaticMethodDefined(ReflectionClass $reflection, string $method): bool
+    {
+        if (!$reflection->hasMethod($method)) {
+            return false;
+        }
+        $refMethod = $reflection->getMethod($method);
+        return $refMethod->isPublic() && !$refMethod->isStatic();
+    }
+
+    /**
+     * Returns a default transformer instance based on the given type.
+     *
+     * This is used to automatically assign a data transformer to a column
+     * when none is explicitly provided.
+     *
+     * Supported types:
+     * - "array" => ArrayTransformer
+     * - "bool"  => BooleanTransformer
+     * - DateTime::class => DateTimeTransformer
+     *
+     * @param string|null $type The data type to get the transformer for (e.g., 'array', 'bool', DateTime::class).
+     *
+     * @return DataTransformer An instance of the corresponding transformer
+     */
+    protected static function getDefaultTransformer(?string $type = null): DataTransformer
+    {
+        return match ($type) {
+            "array" => new ArrayTransformer(),
+            "bool" => new BooleanTransformer(),
+            DateTime::class => new DateTimeTransformer(),
+            default => new DefaultTransformer()
+        };
+    }
+
 
     /**
      * Extract and defer instantiation of attributes from a property or method.

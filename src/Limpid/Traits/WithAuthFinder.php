@@ -4,6 +4,8 @@ namespace Potager\Limpid\Traits;
 
 use Potager\Limpid\Attributes\Hook;
 use Potager\Limpid\Model;
+use Potager\Limpid\Contracts\AuthStrategy;
+use Potager\Limpid\Strategies\BcryptStrategy;
 
 /**
  * Trait WithAuthFinder
@@ -18,130 +20,80 @@ use Potager\Limpid\Model;
  */
 trait WithAuthFinder
 {
-    // Static cache to store the resolved config so it's not recalculated on every call
-    protected static ?array $authFinderResolvedConfig = null;
+    /**
+     * Indicates if the authentication configuration has been resolved.
+     *
+     * @var bool
+     */
+    protected static bool $authFinderBooted = false;
 
     /**
-     * Retrieves the authentication configuration for the model.
-     * It merges a default config with the user-defined config from the #[Auth] attribute if present.
+     * The list of fields used to identify users (e.g. ['email', 'username']).
      *
-     * @return array {
-     *   @var array $identifiers Columns used as user identifiers (e.g. email, username)
-     *   @var string $password The column name where the hashed password is stored
-     *   @var string|array $strategy The hashing/verifying strategy (e.g. 'bcrypt' or ['hashMethod', 'verifyMethod'])
-     * }
+     * @var array
      */
-    protected static function resolveAuthConfig(): array
-    {
-        // Default config applied if no #[Auth] attribute is defined on the model
-        $defaultConfig = [
-            'identifiers' => ['email'],
-            'password' => 'password',
-            'strategy' => 'bcrypt',
-        ];
+    protected static array $authIdentifiers;
 
-        // Reflect on the current model class to check for #[Auth] attributes
-        $reflection = new \ReflectionClass(static::class);
-        $attributes = $reflection->getAttributes(\Potager\Limpid\Attributes\Auth::class);
+    /**
+     * The name of the password attribute on the model.
+     *
+     * @var string
+     */
+    protected static string $authPasswordAttribute;
 
-        // If no attribute found, return the default config
-        if (count($attributes) === 0) {
-            return $defaultConfig;
-        }
-
-        // Instantiate the #[Auth] attribute and get user config
-        /** @var \Potager\Limpid\Attributes\Auth $auth */
-        $auth = $attributes[0]->newInstance();
-        $userConfig = $auth->getConfig();
-
-        // Merge user config on top of default config, user settings overwrite defaults
-        return array_merge($defaultConfig, $userConfig);
-    }
+    /**
+     * The hashing strategy used to hash and verify passwords.
+     *
+     * @var AuthStrategy
+     */
+    protected static AuthStrategy $authStrategy;
 
 
     /**
-     * Resolves the hashing and verification strategy based on the config.
-     * Supports either a predefined string strategy ('bcrypt', 'argon2') or
-     * a custom array with method names defined on the model.
+     * Returns the configured user identifier fields.
      *
-     * @param array $config The auth config returned by resolveAuthConfig()
-     * @return array {
-     *   @var callable $hash Function to hash plain password
-     *   @var callable $verify Function to verify plain password against hash
-     * }
-     *
-     * @throws \InvalidArgumentException if the strategy is unknown or improperly configured
+     * @return array
      */
-    protected static function resolveStrategy(array $config): array
+    public static function getAuthIdentifiers(): array
     {
-        $strategy = $config['strategy'];
-
-        // Handle predefined string strategies with native PHP password functions
-        if (is_string($strategy)) {
-            return match ($strategy) {
-                'bcrypt' => [
-                    'hash' => fn(string $plain) => password_hash($plain, PASSWORD_BCRYPT),
-                    'verify' => fn(string $plain, string $hash) => password_verify($plain, $hash),
-                ],
-                'argon2' => [
-                    'hash' => fn(string $plain) => password_hash($plain, PASSWORD_ARGON2ID),
-                    'verify' => fn(string $plain, string $hash) => password_verify($plain, $hash),
-                ],
-                default => throw new \InvalidArgumentException("Unknown strategy: $strategy"),
-            };
-        }
-
-        // Handle custom strategy: expects an array of two method names [hashMethod, verifyMethod]
-        if (is_array($strategy) && count($strategy) === 2) {
-            [$hashMethod, $verifyMethod] = $strategy;
-
-            // Check that both methods exist on the model class
-            if (!method_exists(static::class, $hashMethod) || !method_exists(static::class, $verifyMethod)) {
-                throw new \InvalidArgumentException("Invalid custom strategy methods on model");
-            }
-
-            // Return callables wrapping the model's custom methods
-            return [
-                'hash' => fn(string $plain) => static::$hashMethod($plain),
-                'verify' => fn(string $plain, string $hash) => static::$verifyMethod($plain, $hash),
-            ];
-        }
-
-        // Strategy config invalid if none of the above match
-        throw new \InvalidArgumentException("Invalid strategy configuration");
+        static::assertAuthFinderBooted();
+        return static::$authIdentifiers;
     }
 
     /**
-     * Returns the full resolved auth config with hashing and verifying callables.
-     * Uses cached result if already computed.
+     * Returns the configured password attribute.
      *
-     * @return array {
-     *   @var array $identifiers
-     *   @var string $password
-     *   @var callable $hash
-     *   @var callable $verifier
-     * }
+     * @return string
      */
-    protected static function getAuthFinderConfig(): array
+    public static function getAuthPasswordAttribute(): string
     {
-        // Return the cached config if it was already resolved
-        if (static::$authFinderResolvedConfig !== null) {
-            return static::$authFinderResolvedConfig;
-        }
-
-        // Resolve base config and strategy functions
-        $config = static::resolveAuthConfig();
-        $strategy = static::resolveStrategy($config);
-
-        // Cache and return the full config with callable hash & verifier functions
-        static::$authFinderResolvedConfig = [
-            "identifiers" => $config['identifiers'],
-            'password' => $config['password'],
-            'hash' => $strategy['hash'],
-            'verifier' => $strategy['verify'],
-        ];
-        return static::$authFinderResolvedConfig;
+        static::assertAuthFinderBooted();
+        return static::$authPasswordAttribute;
     }
+
+    /**
+     * Returns the configured password hashing strategy.
+     *
+     * @return AuthStrategy
+     */
+    public static function getAuthStrategy(): AuthStrategy
+    {
+        static::assertAuthFinderBooted();
+        return static::$authStrategy;
+    }
+
+
+    /* 
+     * ========================================================================
+     * AUTHENTICATION CORE LOGIC
+     * ------------------------------------------------------------------------
+     * These methods implement the core authentication functionality:
+     * - Locating users via identifier(s)
+     * - Verifying credentials securely using a pluggable hashing strategy
+     * - Auto-hashing password values before saving to the database
+     * - Providing common helpers like `attempt()`
+     * ======================================================================== */
+
 
     /**
      * Finds a user by any of the configured identifiers (e.g. email, username).
@@ -151,10 +103,9 @@ trait WithAuthFinder
      */
     public static function findForAuth(string $identifier): ?static
     {
-        $config = static::getAuthFinderConfig();
-        $identifiers = $config['identifiers'];
+        static::assertAuthFinderBooted();
 
-        foreach ($identifiers as $column) {
+        foreach (static::$authIdentifiers as $column) {
             $user = static::findBy($column, $identifier);
             if ($user) {
                 return $user;
@@ -165,16 +116,35 @@ trait WithAuthFinder
     }
 
     /**
-     * Compares a plain text password against a hashed password.
+     * Verifies a plain password against a hashed one using the configured strategy.
      *
-     * @param string $plain Plain text password to check
-     * @param string $hashed Stored password hash
-     * @return bool True if passwords match, false otherwise
+     * @param string $plain The plaintext password
+     * @param string $hashed The hashed password
+     * @return bool True if valid, false otherwise
      */
-    public static function validatePassword(string $plain, string $hashed): bool
+    public static function verifyPlainPasswordAgainstHash(string $plain, string $hashed): bool
     {
-        $verifier = static::getAuthFinderConfig()['verifier'];
-        return $verifier($plain, $hashed);
+        static::assertAuthFinderBooted();
+        return static::$authStrategy->verify($plain, $hashed);
+    }
+
+    /**
+     * Verifies if the given plain password matches the model's password attribute.
+     *
+     * @param string $plain The plaintext password
+     * @param string|null $hashed Optional hash to check against (defaults to model's password field)
+     * @return bool True if valid, false otherwise
+     */
+    public function isPasswordValid(string $plain, ?string $hashed = null): bool
+    {
+        static::assertAuthFinderBooted();
+
+        // If no hash provided, use the model's password attribute
+        if ($hashed === null) {
+            $hashed = $this->{static::$authPasswordAttribute};
+        }
+
+        return static::$authStrategy->verify($plain, $hashed);
     }
 
     /**
@@ -187,27 +157,19 @@ trait WithAuthFinder
      */
     public static function verifyCredentials(string $identifier, string $password): ?static
     {
-        $config = static::getAuthFinderConfig();
-        $identifiers = $config['identifiers'];
-        $hasher = $config['hash'];
-        $verifier = $config['verifier'];
-        $passwordColumn = $config['password'];
+        static::assertAuthFinderBooted();
 
-        // Create a dummy hash so that password_verify is always called, to prevent timing attacks
-        $dummyHash = $hasher('dummy_password');
-        $foundUser = null;
+        $user = static::findForAuth($identifier);
 
-        foreach ($identifiers as $column) {
-            $user = static::findBy($column, $identifier);
-            $hash = $user ? $user->$passwordColumn : $dummyHash;
+        // Use a dummy hash to ensure constant-time verification
+        $dummyHash = static::$authStrategy->hash('dummy_password');
+        $hash = $user ? $user->{static::$authPasswordAttribute} : $dummyHash;
 
-            // Always verify to keep constant-time execution, even if user is not found
-            if ($verifier($password, $hash) && $user) {
-                $foundUser = $user;
-            }
+        if (static::$authStrategy->verify($password, $hash) && $user) {
+            return $user;
         }
 
-        return $foundUser;
+        return null;
     }
 
     /**
@@ -231,10 +193,192 @@ trait WithAuthFinder
     #[Hook('beforeSave')]
     protected function hashPasswordBeforeSave(Model $model): void
     {
-        // Retrieve the hash callable and apply it to the current password property
-        $hash = static::getAuthFinderConfig()['hash'];
-        $password = static::getAuthFinderConfig()['password'];
-        $model->$password = $hash($model->$password);
+        static::assertAuthFinderBooted();
+
+        if ($model->isDirty(static::$authPasswordAttribute)) {
+            $password = $model->{static::$authPasswordAttribute};
+            $model->{static::$authPasswordAttribute} = static::$authStrategy->hash($password);
+        }
+    }
+
+
+    /* 
+     * ========================================================================
+     * AUTH CONFIGURATION RESOLUTION
+     * ------------------------------------------------------------------------
+     * These methods handle resolving, validating, and applying authentication
+     * configuration such as identifiers, password field, and hashing strategy.
+     * Intended to be used at boot time to prepare the model for auth ops.
+     * ======================================================================== */
+
+
+    /**
+     * Ensures that the authentication configuration is loaded.
+     *
+     * Called before performing any auth-related actions.
+     *
+     * @return void
+     */
+    public static function assertAuthFinderBooted(): void
+    {
+        if (!static::$authFinderBooted) {
+            static::resolveAuthFinderConfig();
+        }
+    }
+
+
+    /**
+     * Resolves and initializes the authentication configuration for the model.
+     *
+     * This method:
+     * - Ensures the trait is only used in a class extending `Model`
+     * - Loads user-defined configuration via `authFinderConfig()` if defined
+     * - Validates and sets the identifier fields (e.g. email, username)
+     * - Validates and sets the password column
+     * - Validates and initializes the hashing strategy
+     *
+     * After successful validation, it assigns the resolved configuration
+     * to the static properties `$authIdentifiers`, `$authPasswordAttribute`,
+     * and `$authStrategy`.
+     *
+     * @throws \LogicException if the trait is used on a non-Model class
+     * @throws \InvalidArgumentException if any part of the configuration is invalid
+     */
+    protected static function resolveAuthFinderConfig(): void
+    {
+        static::assertUsedOnModel();
+
+        $config = static::resolveUserConfig();
+
+        $identifiers = static::resolveAndValidateIdentifiers($config);
+        $passwordAttr = static::resolveAndValidatePassword($config);
+        $strategy = static::resolveAndValidateStrategy($config);
+
+        static::$authIdentifiers = $identifiers;
+        static::$authPasswordAttribute = $passwordAttr;
+        static::$authStrategy = $strategy;
+        static::$authFinderBooted = true;
+    }
+
+    /**
+     * Asserts that the trait is only used on subclasses of the base Model.
+     *
+     * @throws \LogicException if the using class does not extend Model.
+     */
+    protected static function assertUsedOnModel(): void
+    {
+        if (!is_subclass_of(static::class, Model::class)) {
+            throw new \LogicException("Trait WithAuthFinder can only be used on classes extending Model.");
+        }
+    }
+
+    /**
+     * Loads user-defined authentication config from `authFinderConfig()` if available.
+     *
+     * @return array The configuration array (empty if none defined).
+     * @throws \InvalidArgumentException if `authFinderConfig()` returns a non-array value.
+     */
+    protected static function resolveUserConfig(): array
+    {
+        if (method_exists(static::class, 'authFinderConfig')) {
+            $config = static::authFinderConfig();
+            if (!is_array($config)) {
+                throw new \InvalidArgumentException(
+                    static::class . "::authFinderConfig() must return an array, " . gettype($config) . " given."
+                );
+            }
+            return $config;
+        }
+
+        return [];
+    }
+
+    /**
+     * Validates and resolves the list of identifier fields used for authentication.
+     *
+     * @param array $config The user config array.
+     * @return array The validated list of identifier column names.
+     * @throws \InvalidArgumentException if identifiers are missing, empty, or invalid.
+     */
+    protected static function resolveAndValidateIdentifiers(array $config): array
+    {
+        $identifiers = $config['identifiers'] ?? ['email'];
+
+        if (!is_array($identifiers) || empty($identifiers)) {
+            throw new \InvalidArgumentException(
+                static::class . "::\$authIdentifiers must be a non-empty array of identifier keys."
+            );
+        }
+
+        foreach ($identifiers as $id) {
+            if (!is_string($id) || trim($id) === '') {
+                throw new \InvalidArgumentException(
+                    static::class . "::\$authIdentifiers must contain non-empty strings."
+                );
+            }
+            if (!static::_hasColumn($id)) {
+                throw new \InvalidArgumentException(
+                    static::class . "::\$authIdentifiers contains '{$id}' which is not a valid column in " . static::class
+                );
+            }
+        }
+
+        return $identifiers;
+    }
+
+    /**
+     * Validates and resolves the password column name from config.
+     *
+     * @param array $config The user config array.
+     * @return string The validated password column name.
+     * @throws \InvalidArgumentException if the password field is missing or invalid.
+     */
+    protected static function resolveAndValidatePassword(array $config): string
+    {
+        $passwordAttr = $config['password'] ?? 'password';
+
+        if (!is_string($passwordAttr) || trim($passwordAttr) === '') {
+            throw new \InvalidArgumentException(
+                static::class . "::\$authPasswordAttribute must be a non-empty string."
+            );
+        }
+
+        if (!static::_hasColumn($passwordAttr)) {
+            throw new \InvalidArgumentException(
+                static::class . "::\$authPasswordAttribute '{$passwordAttr}' is not a valid column in " . static::class
+            );
+        }
+
+        return $passwordAttr;
+    }
+
+    /**
+     * Validates and resolves the hashing strategy for password security.
+     *
+     * @param array $config The user config array.
+     * @return AuthStrategy A validated strategy instance.
+     * @throws \InvalidArgumentException if the strategy is missing, invalid, or not secure.
+     */
+    protected static function resolveAndValidateStrategy(array $config): AuthStrategy
+    {
+        $strategy = $config['strategy'] ?? new BcryptStrategy();
+
+        if (!$strategy instanceof AuthStrategy) {
+            $type = is_object($strategy) ? get_class($strategy) : gettype($strategy);
+            throw new \InvalidArgumentException(
+                static::class . "::\$authStrategy must be an instance of AuthStrategy, {$type} given."
+            );
+        }
+
+        $testInput = bin2hex(random_bytes(16));
+        $hashed = $strategy->hash($testInput);
+        if (!$strategy->verify($testInput, $hashed)) {
+            throw new \InvalidArgumentException(
+                static::class . "::\$authStrategy '" . get_class($strategy) . "' is not a valid hashing strategy."
+            );
+        }
+
+        return $strategy;
     }
 }
 

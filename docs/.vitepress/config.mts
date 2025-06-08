@@ -18,7 +18,10 @@ export default defineConfig({
 			},
 			{
 				text: 'Basics',
-				items: [{ text: 'Query Builder', link: '/basics/query-builder' }],
+				items: [
+					{ text: 'Models', link: '/basics/models' },
+					{ text: 'CRUD Operations', link: '/basics/crud-operations' },
+				],
 			},
 		],
 

@@ -13,19 +13,20 @@ use Pixie\QueryBuilder\QueryBuilderHandler;
  */
 class Database
 {
-    /** @var \PDO */
     protected \PDO $pdo;
 
-    /** @var Connection */
     protected Connection $connection;
+
+    protected static Database $instance;
 
     /**
      * Database constructor.
      * Initializes the Pixie database connection.
      */
-    public function __construct()
+    public function __construct(array $config)
     {
-        $this->initializeConnection();
+        $this->initializeConnection($config);
+        static::$instance = $this;
     }
 
     /**
@@ -33,11 +34,8 @@ class Database
      *
      * @throws \Exception If connection fails.
      */
-    private function initializeConnection(): void
+    private function initializeConnection(array $config): void
     {
-        // Get the Config instance 
-        $config = App::useConfig();
-
         // Build the config array for Pixie
         $pixieConfig = $this->buildPixieConfig($config);
 
@@ -56,17 +54,17 @@ class Database
      * @param mixed $config
      * @return array
      */
-    private function buildPixieConfig($config): array
+    private function buildPixieConfig(array $config): array
     {
         return [
-            'driver' => $config->get('database.driver', 'mysql'),
-            'host' => $config->get('database.host', 'localhost'),
-            'database' => $config->get('database.database'),
-            'username' => $config->get('database.username'),
-            'password' => $config->get('database.password', ''),
-            'charset' => $config->get('database.charset', 'utf8'),
-            'collation' => $config->get('database.collation', 'utf8_unicode_ci'),
-            'prefix' => $config->get('database.prefix', ''),
+            'driver' => $config['driver'] ?? 'mysql',
+            'host' => $config['host'] ?? 'localhost',
+            'database' => $config['database'] ?? null,
+            'username' => $config['username'] ?? null,
+            'password' => $config['password'] ?? '',
+            'charset' => $config['charset'] ?? 'utf8',
+            'collation' => $config['collation'] ?? 'utf8_unicode_ci',
+            'prefix' => $config['prefix'] ?? '',
             'options' => [\PDO::ATTR_TIMEOUT => 5, \PDO::ATTR_EMULATE_PREPARES => false],
         ];
     }
@@ -98,7 +96,7 @@ class Database
      */
     public static function pdo(): \PDO
     {
-        return App::useDatabase()->getPdo();
+        return static::$instance->getPdo();
     }
 
     /**
@@ -108,7 +106,7 @@ class Database
      */
     public static function connection(): Connection
     {
-        return App::useDatabase()->getConnection();
+        return static::$instance->getConnection();
     }
 
     /**
@@ -118,7 +116,7 @@ class Database
      */
     public static function query(): QueryBuilderHandler
     {
-        $queryBuilder = App::useDatabase()->connection->getQueryBuilder();
+        $queryBuilder = static::$instance->connection->getQueryBuilder();
         return $queryBuilder;
     }
 

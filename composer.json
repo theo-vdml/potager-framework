@@ -4,7 +4,8 @@
     "type": "library",
     "autoload": {
         "psr-4": {
-            "Potager\\": "src/"
+            "Potager\\": "src/",
+            "Potager\\Test\\": "tests/App"
         },
         "files": [
             "src/Helpers/path.php",
@@ -20,10 +21,10 @@
     ],
     "require": {
         "php": ">=8.1",
+        "ext-pdo": "*",
         "latte/latte": "^3.0",
         "vlucas/phpdotenv": "^5.6",
         "potager/pixie": "dev-master"
-
     },
     "require-dev": {
         "pestphp/pest": "^3.8"

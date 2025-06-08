@@ -2,17 +2,17 @@
 
 namespace Potager\Limpid;
 
-use InvalidArgumentException;
-use Potager\App;
+use PDOStatement;
 use Potager\Limpid\Boot\ModelBooter;
 use Potager\Limpid\Definitions\ColumnDefinition;
 use Potager\Limpid\Definitions\ComputedDefinition;
 use Potager\Limpid\Definitions\ModelDefinition;
 use Pixie\QueryBuilder\QueryBuilderHandler;
-use Potager\Support\Str;
+use Potager\Limpid\Exceptions\MissingComputedResolverException;
 use Potager\Support\Utils;
+use InvalidArgumentException;
+use RuntimeException;
 use stdClass;
-use DateTime;
 
 /**
  * Base abstract model class for ORM functionality.
@@ -59,6 +59,16 @@ abstract class Model
     protected bool $_persisted = false;
 
     /**
+     * Indicates whether the model instance has been marked as deleted.
+     * 
+     * This is used to track soft-deleted models or instances that are logically removed
+     * but not physically deleted from the database.
+     *
+     * @var bool
+     */
+    protected bool $_isDeleted = false;
+
+    /**
      * The original attribute values when the model was loaded or saved.
      * 
      * @var array<string, mixed>
@@ -79,6 +89,29 @@ abstract class Model
      */
     protected array $_extras = [];
 
+    /**
+     * Indicates whether the model uses a manually assigned primary key.
+     *
+     * If set to true, the model requires that the primary key be explicitly set
+     * before creation (e.g., for UUIDs or externally generated IDs).
+     * If false (default), the ORM assumes the primary key is auto-incremented
+     * and should not be manually set during creation unless safe mode is disabled.
+     *
+     * @var bool
+     */
+    public static bool $selfAssignPrimaryKey = false;
+
+    /**
+     * Indicates whether manual assignment of the primary key is protected.
+     *
+     * When true (default), assigning a primary key manually on non selfAssignPrimaryKey models
+     * is not allowed. This helps prevent unintended modification of primary keys.
+     * Use {@see disablePrimaryKeyProtection()} to override this behavior intentionally.
+     *
+     * @var bool
+     */
+    protected bool $primaryKeyProtectionEnabled = true;
+
     /*
      * -----------------------------------------------------------------------------------------------------------------
      *                                 MODEL DEFINITION & METADATA HELPERS (INTERNAL API)
@@ -94,7 +127,6 @@ abstract class Model
     /**
      * Check if the model has a column with the given name.
      *
-     * @internal
      */
     public static function _hasColumn(string $name): bool
     {
@@ -104,7 +136,6 @@ abstract class Model
     /**
      * Get the column definition for a given name.
      *
-     * @internal
      */
     public static function _getColumn(string $name): ColumnDefinition|null
     {
@@ -114,7 +145,6 @@ abstract class Model
     /**
      * Check if the model has a computed property with the given name.
      *
-     * @internal
      */
     public static function _hasComputed(string $name): bool
     {
@@ -124,7 +154,6 @@ abstract class Model
     /**
      * Get the computed property definition for a given name.
      *
-     * @internal
      */
     public static function _getComputed(string $name): ComputedDefinition|null
     {
@@ -132,10 +161,44 @@ abstract class Model
     }
 
     /**
+     * Get the primary key **column name** (as it exists in the database).
+     *
+     * @return string The name of the primary key column.
+     */
+    public static function _getPrimaryKeyColumn(): string
+    {
+        return static::getDefinition()->getPrimary()->name;
+    }
+
+    /**
+     * Get the **property name** corresponding to the primary key in the model class.
+     *
+     * @return string The name of the primary key property in the model.
+     */
+    public static function _getPrimaryKeyProperty(): string
+    {
+        return static::getDefinition()->getPrimary()->property;
+    }
+
+    /**
+     * Get the current value of the model’s primary key.
+     *
+     * This will return null if the key has not yet been assigned (e.g., for new models).
+     *
+     * @return mixed The value of the primary key property.
+     */
+    public function getPrimaryKeyValue(): mixed
+    {
+        $primary = static::_getPrimaryKeyProperty();
+        return $this->{$primary};
+    }
+
+    /**
      * Returns the model definition for the current model class,
      * bootstrapping it if it's not already cached.
      *
      * @return ModelDefinition
+     * @throws MissingComputedResolverException
      */
     public static function getDefinition(): ModelDefinition
     {
@@ -146,15 +209,40 @@ abstract class Model
     }
 
     /**
-     * Returns the application's database instance.
+     * Disables the protection that prevents manual assignment of the primary key
+     * on auto-increment models.
      *
-     * @return Database The database connection instance.
+     * After calling this method, it is allowed to override or set the primary key manually.
+     *
+     * @return void
      */
-    protected static function getDatabase(): Database
+    public function disablePrimaryKeyProtection(): void
     {
-        return App::getInstance()->getDatabase();
+        $this->primaryKeyProtectionEnabled = false;
     }
 
+    /**
+     * Enables the protection that prevents manual assignment of the primary key
+     * on auto-increment models.
+     *
+     * This method reinstates the default safeguard against overriding the primary key.
+     *
+     * @return void
+     */
+    public function enablePrimaryKeyProtection(): void
+    {
+        $this->primaryKeyProtectionEnabled = true;
+    }
+
+    /**
+     * Checks whether the protection against manual primary key assignment is enabled.
+     *
+     * @return bool True if the primary key protection is enabled, false otherwise.
+     */
+    public function isPrimaryKeyProtectionEnabled(): bool
+    {
+        return $this->primaryKeyProtectionEnabled;
+    }
 
 
     /*
@@ -168,7 +256,7 @@ abstract class Model
      * These methods ensure the model instance is prepared with proper attribute values,
      * and manage tracking of original vs. modified states.
      * 
-     * __construct(), boot(), hydrateOriginals(), fill(), merge(), hydrateFromStorage(), newUnsavedInstance(), factory()
+     * __construct(), boot(), hydrateOriginals(), fill(), merge(), consumeFromStorage(), newUnsavedInstance(), factory()
      */
 
     /**
@@ -186,6 +274,7 @@ abstract class Model
      * This prevents magic properties from conflicting with internal tracking logic.
      *
      * @return void
+     * @throws MissingComputedResolverException
      */
     protected function boot(): void
     {
@@ -197,8 +286,8 @@ abstract class Model
     }
 
     /**
-     * Sync originals with the attributes. After this `isDirty` will
-     * return false
+     * Sync originals with the attributes. After this `isDirty`
+     * will return false
      */
     private function hydrateOriginals(): void
     {
@@ -231,87 +320,127 @@ abstract class Model
      */
     public function merge(stdClass|array $values, bool $allowExtraProperties = false): static
     {
-        /**
-         * Get the short class name for error messages or logging.
-         */
+        // Get the short class name for error messages or logging.
         $model = Utils::classBasename(static::class);
 
-        /**
-         * Convert stdClass object to array for easier iteration.
-         */
+        // Convert stdClass object to array for easier iteration.
         if ($values instanceof stdClass) {
             $values = (array) $values;
         }
 
-        /**
-         * Iterate through each key-value pair to merge into the model.
-         */
+        // Iterate through each key-value pair to merge into the model.
         foreach ($values as $key => $value) {
 
-            /**
-             * If the key corresponds to a defined database column,
-             * assign the value to the internal attributes array.
-             */
+            // If the key corresponds to a defined database column,
+            // assign the value to the internal attributes array.
             if (static::_hasColumn($key)) {
-                $this->{$key} = $value;
+                $column = static::_getColumn($key);
+                $this->{$column->property} = $value;
                 continue;
             }
 
-            /**
-             * If the key corresponds to a computed property,
-             * ignore it since it's derived, not set directly.
-             */
+            // If the key corresponds to a computed property,
+            // ignore it since it's derived, not set directly.
             if (static::_hasComputed($key)) {
                 continue;
             }
 
-            /**
-             * If the property physically exists on the object,
-             * assign the value directly to the property.
-             */
+            // If the property physically exists on the object,
+            // assign the value directly to the property.
             if (property_exists($this, $key)) {
                 $this->{$key} = $value;
                 continue;
             }
 
-            /**
-             * If extra properties are not allowed and the key
-             * doesn't match any known property, throw an exception.
-             */
+            // If extra properties are not allowed and the key
+            // doesn't match any known property, throw an exception.
             if (!$allowExtraProperties) {
-                throw new InvalidArgumentException("Cannot define \"{$key}\" on \"{$model}\" model, since it is not defined as a model property ");
+                throw new InvalidArgumentException("Cannot define \"{$key}\" on \"{$model}\" model, since it is not defined as a model property.");
             }
 
-            /**
-             * Otherwise, store the extra property in the _extras array.
-             */
+            // Otherwise, store the extra property in the _extras array.
             $this->_extras[$key] = $value;
         }
 
-        /**
-         * Return the current instance to support method chaining.
-         */
+        // Return the current instance to support method chaining.
         return $this;
     }
 
     /**
-     * Instantiates a model from data retrieved from persistent storage (e.g. a database).
+     * Create an instance of the model from a database query result.
      *
-     * This method:
-     * - Fills the model with the provided data.
-     * - Marks the instance as persisted (i.e. it exists in storage).
-     * - Syncs original attribute values to prevent dirty tracking.
+     * This static factory method takes a result object or array from a database query,
+     * consumes its data to populate the model, hydrates the original attributes for
+     * change tracking, and marks the instance as persisted.
      *
-     * @param stdClass|array $values The data from storage used to populate the model.
-     * @return static A fully hydrated, non-dirty model marked as persisted.
+     * @param stdClass|array $result  The raw query result to initialize the model with.
+     * @return static                 A fully-hydrated, persisted instance of the model.
      */
-    protected static function hydrateFromStorage(stdClass|array $values): static
+    protected static function createFromQueryResult(stdClass|array $result): static
     {
         $instance = new static();
-        $instance->_persisted = true;
-        $instance->fill($values, true);
+
+        $instance->_consumeQueryResult($result);
         $instance->hydrateOriginals();
+
+        $instance->_persisted = true;
+
         return $instance;
+    }
+
+    /**
+     * Consumes and maps raw query result data into model attributes.
+     *
+     * Iterates over the result data, determines the corresponding model column for each
+     * key, applies any defined consumer or transformer logic, and sets the attribute value.
+     *
+     * @param stdClass|array $result  The raw data to be mapped into the model.
+     * @return void
+     */
+    public function _consumeQueryResult(stdClass|array $result): void
+    {
+        $result = (array) $result;
+        foreach ($result as $key => $value) {
+            $column = static::_getColumn($key);
+            if ($column) {
+                $value = $result[$key];
+
+                if ($column->consume) {
+                    $value = $this->{$column->consume}($value);
+                } else if ($column->transformer) {
+                    $value = $column->transformer->consume($value);
+                }
+
+                $this->setAttribute($column->property, $value);
+                continue;
+            }
+        }
+    }
+
+    /**
+     * Prepares attribute values for storage by applying per-column transformations.
+     *
+     * If a column defines a `prepare` method, it will be called on the value.
+     * Otherwise, if a transformer is defined, its `prepare()` method will be used.
+     *
+     * @param array $attributes The raw attribute values to process.
+     * @return array The transformed values ready for storage.
+     */
+    private function _prepareForQuery(array $attributes): array
+    {
+        return array_reduce(array_keys($attributes), function (array $result, $key) use ($attributes): array {
+            if (!static::_hasColumn($key))
+                return $result;
+            $column = static::_getColumn($key);
+            $value = $attributes[$key];
+            if ($column->prepare) {
+                $value = $this->{$column->prepare}($value);
+            } else if ($column->transformer) {
+                $value = $column->transformer->prepare($value);
+            }
+            $result[$column->name] = $value;
+            return $result;
+        }, []);
     }
 
     /**
@@ -320,13 +449,13 @@ abstract class Model
      * This method fills the model with provided attributes, disallows any extra
      * (undefined) properties, and leaves the instance marked as non-persisted.
      *
-     * @param stdClass|array $value The attribute values to populate the model with.
+     * @param stdClass|array $attributes The attribute values to populate the model with.
      * @return static A new model instance not yet persisted to the database.
      */
-    protected static function newUnsavedInstance(stdClass|array $value): static
+    protected static function newUnsavedInstance(stdClass|array $attributes): static
     {
         $instance = new static();
-        $instance->fill($value, false);
+        $instance->fill($attributes, allowExtraProperties: false);
         return $instance;
     }
 
@@ -346,6 +475,124 @@ abstract class Model
 
     /*
      * -----------------------------------------------------------------------------------------------------------------
+     *                                 STATE AND ATTRIBUTE MANAGEMENT
+     * -----------------------------------------------------------------------------------------------------------------
+     *
+     * Methods to check and retrieve the state of model attributes, such as tracking changes (dirty checking).
+     */
+
+
+    /**
+     * Determine if the model has been persisted to the database.
+     *
+     * @return bool True if the model exists in the database; false if it's new.
+     */
+    public function isPersisted(): bool
+    {
+        return $this->_persisted;
+    }
+
+    /**
+     * Determine if the model is new (not yet persisted).
+     *
+     * @return bool True if the model has not been saved; false otherwise.
+     */
+    public function isNew(): bool
+    {
+        return !$this->_persisted;
+    }
+
+    /**
+     * Check if the model has been marked as deleted (soft delete).
+     *
+     * @return bool True if the model is logically deleted; false otherwise.
+     */
+    public function isDeleted(): bool
+    {
+        return $this->_isDeleted;
+    }
+
+    /**
+     * Ensures that the model instance has not been marked as deleted.
+     *
+     * Throws a RuntimeException if the model is considered deleted,
+     * preventing operations on soft-deleted or logically removed records.
+     *
+     * @throws RuntimeException If the model is marked as deleted.
+     * @return void
+     */
+    private function _ensureIsntDeleted(): void
+    {
+        if ($this->isDeleted()) {
+            throw new RuntimeException("Cannot perform operation on a deleted model.");
+        }
+    }
+
+    /**
+     * Get the attributes that have been modified since the model was loaded or saved.
+     *
+     * @return array An associative array of changed attributes.
+     */
+    public function getDirty(): array
+    {
+        if (!$this->isPersisted()) {
+            return $this->_attributes;
+        }
+
+        return array_reduce(array_keys($this->_attributes), function (array $result, $key): array {
+            $value = $this->_attributes[$key];
+            $original = $this->_originals[$key];
+
+            if ($value != $original) {
+                $result[$key] = $value;
+            }
+
+            return $result;
+        }, []);
+    }
+
+    /**
+     * Determine if the model has unsaved changes.
+     *
+     * @param string|null $field Optional. Check if a specific field is dirty.
+     * @return bool True if the model (or the given field) has unsaved changes.
+     */
+    public function isDirty(?string $field = null): bool
+    {
+        if ($field) {
+            return in_array($field, array_keys($this->getDirty()));
+        }
+
+        return count($this->getDirty()) > 0;
+    }
+
+
+    public function setAttribute(string $key, mixed $value): void
+    {
+        $this->_attributes[$key] = $value;
+    }
+
+    /**
+     * Forcefully sets the original value of a model attribute.
+     *
+     * This method overrides the original value used for dirty tracking and update operations.
+     * Use with caution, as improper usage may cause inconsistencies in model state or database updates.
+     *
+     * @param string $key   The column name whose original value should be forced.
+     * @param mixed  $value The value to set as the original.
+     *
+     * @return void
+     */
+    public function forceOriginal(string $key, mixed $value): void
+    {
+        $column = static::_getColumn($key);
+        if ($column) {
+            $this->_originals[$column->property] = $value;
+        }
+    }
+
+    /*
+     * -----------------------------------------------------------------------------------------------------------------
      *                                 EVENT HOOKS MANAGEMENT
      * -----------------------------------------------------------------------------------------------------------------
      *
@@ -353,7 +600,7 @@ abstract class Model
      * Hooks allow injection of custom logic around model lifecycle events, such as before/after saving or deleting.
      * Hooks are prioritized and executed in order, providing flexible extensibility for models.
      * 
-     * registerHookOn(), registerHook(), triggerModelHook()
+     * registerHookOn(), registerHook(), fireEvent()
      */
 
     /**
@@ -400,7 +647,7 @@ abstract class Model
      * @param string $event The event name to trigger (e.g. 'beforeSave', 'afterCreate').
      * @return void
      */
-    protected function triggerModelHook(string $event): void
+    protected function fireEvent(string $event): void
     {
         $hooks = static::$_hooks[static::class][$event] ?? [];
 
@@ -420,11 +667,12 @@ abstract class Model
      * and query builder accessors. It’s the core CRUD interface that connects the model with the data layer.
      */
 
-    public function isPersisted()
-    {
-        return $this->_persisted;
-    }
-
+    /**
+     * Create and persist a new model instance with the given attributes.
+     *
+     * @param array $data Attributes for the new model.
+     * @return static The newly created, persisted model instance.
+     */
     public static function create(array $data): static
     {
         $instance = static::newUnsavedInstance($data);
@@ -432,94 +680,143 @@ abstract class Model
         return $instance;
     }
 
-    public static function createMany()
-    {
-
-    }
-
+    /**
+     * Find a model instance by its primary key.
+     *
+     * @param int $id The primary key value.
+     * @return static|null The model instance if found, or null otherwise.
+     */
     public static function find(int $id): static|null
     {
         $data = static::query()->where('id', $id)->first();
-        return $data ? static::hydrateFromStorage($data) : null;
+        return $data ? static::createFromQueryResult($data) : null;
     }
 
-    public static function findBy(string $column, string $value)
+    /**
+     * Find a model instance by a specific column and value.
+     *
+     * @param string $column The column name to query.
+     * @param string $value The value to search for.
+     * @return static|null The model instance if found, or null otherwise.
+     */
+    public static function findBy(string $column, string $value): static|null
     {
         $data = static::query()->where($column, $value)->first();
-        return $data ? static::hydrateFromStorage($data) : null;
+        return $data ? static::createFromQueryResult($data) : null;
     }
 
-    public static function findOrFail()
+    /**
+     * Saves the current model to the database.
+     *
+     * Handles both creation of new records and updating of existing ones.
+     * Automatically triggers model lifecycle hooks (before/after create/save/update),
+     * prepares attributes for storage, and synchronizes the model state after persistence.
+     *
+     * @return static Returns the current model instance after persistence.
+     *
+     * @throws \RuntimeException If attempting to update without a primary key or if the update fails.
+     */
+    public function save(): static
     {
+        $this->_ensureIsntDeleted();
+        if ($this->isNew()) {
+            // Trigger pre-insert lifecycle hooks
+            $this->fireEvent('beforeCreate');
+            $this->fireEvent('beforeSave');
 
-    }
-
-    public static function findByOrFail()
-    {
-
-    }
-
-    public static function findMany()
-    {
-
-    }
-
-    public static function findManyOrFail()
-    {
-
-    }
-
-    public function save()
-    {
-        $this->triggerModelHook('beforeSave');
-
-        $columns = static::getDefinition()->getColumns();
-        $data = [];
-
-        foreach ($columns as $propertyName => $definition) {
-            $column = Str::toSnakeCase($propertyName);
-            $value = $this->$propertyName ?? null;
-
-            if ($value instanceof DateTime) {
-                $value = $value->format('Y-m-d H:i:s');
+            // For self-assigned primary key models, ensure the primary key is set
+            if (static::$selfAssignPrimaryKey && $this->getPrimaryKeyValue() === null) {
+                throw new RuntimeException('Primary key must be set manually for self-assigned models.');
             }
 
-            $data[$column] = $value;
-        }
+            // Prepare attributes for insertion
+            $createPayload = $this->_prepareForQuery($this->_attributes);
 
-        $builder = static::query();
+            // Insert record into the database
+            $id = static::query()->insert($createPayload);
 
-        if (!$this->isPersisted()) {
-            $id = $builder->insert($data);
-
-            $primaryKey = static::$modelMetas[static::class]['primary'] ?? 'id'; // ! NON EXISTING PROPS, OUTDATED SINCE REFACTOR
-
-            if ($primaryKey && !isset($this->$primaryKey)) {
-                $this->$primaryKey = $id;
+            // Set the primary key property if not already set
+            if ($this->getPrimaryKeyValue() === null) {
+                $this->setAttribute(static::_getPrimaryKeyProperty(), $id);
             }
+
+            // Synchronize original values and update persistence state
+            $this->hydrateOriginals();
             $this->_persisted = true;
-            $this->triggerModelHook('onCreate');
-        } else {
-            // Update (a faire)
+
+            // Trigger post-insert lifecycle hooks
+            $this->fireEvent('afterCreate');
+            $this->fireEvent('afterSave');
+
+            return $this;
         }
 
-        $this->triggerModelHook('afterSave');
+        // If no changes detected, return early
+        if (!$this->isDirty()) {
+            return $this;
+        }
 
-    }
+        $this->fireEvent('beforeUpdate');
+        $this->fireEvent('beforeSave');
 
-    public function saveOrFail()
-    {
+        // Fetch the original primary key value for the update WHERE clause
+        $originalPrimaryKeyValue = $this->_originals[$this->_getPrimaryKeyProperty()] ?? null;
 
+        // Cannot update without a valid original primary key
+        if ($originalPrimaryKeyValue === null) {
+            throw new RuntimeException("Cannot update model without primary key.");
+        }
+
+        // Prepare only the changed attributes for update
+        $updatePayload = $this->_prepareForQuery($this->getDirty());
+
+        // Perform the update query if there's data to update
+        if (count($updatePayload) > 0) {
+            $stmt = static::query()
+                ->where(static::_getPrimaryKeyColumn(), $originalPrimaryKeyValue)
+                ->update($updatePayload);
+
+            if (!($stmt instanceof PDOStatement) || !$stmt->rowCount()) {
+                throw new RuntimeException("Failed to update model");
+            }
+        }
+
+        // Synchronize original values after successful update
+        $this->hydrateOriginals();
+
+        // Trigger post-update lifecycle hooks
+        $this->fireEvent('afterUpdate');
+        $this->fireEvent('afterSave');
+
+        return $this;
     }
 
     public function delete()
     {
+        $this->_ensureIsntDeleted();
+        if ($this->isNew()) {
+            throw new RuntimeException("Cannot delete a model that has not been persisted.");
+        }
 
-    }
+        $this->fireEvent('beforeDelete');
 
-    public function deleteOrFail()
-    {
+        $primaryKeyValue = $this->getPrimaryKeyValue();
 
+        if ($primaryKeyValue === null) {
+            throw new RuntimeException("Cannot delete model without primary key.");
+        }
+
+        $stmt = static::query()
+            ->where(static::_getPrimaryKeyColumn(), $primaryKeyValue)
+            ->delete();
+
+        if (!($stmt instanceof PDOStatement) || !$stmt->rowCount()) {
+            throw new RuntimeException("Failed to delete model");
+        }
+
+        $this->_isDeleted = true;
+
+        $this->fireEvent('afterDelete');
     }
 
     /**
@@ -550,31 +847,24 @@ abstract class Model
      * @param string $key The property name being accessed.
      * @return mixed|null Returns computed value, column value, or extra property, or null if not found.
      */
-    public function __get($key)
+    public function __get(string $key): mixed
     {
-        /**
-         * If the key corresponds to a computed property,
-         * resolve and return the computed value via its resolver method.
-         */
+        // If the key corresponds to a computed property,
+        // resolve and return the computed value via its resolver method.
         if (static::_hasComputed($key)) {
             $resolver = static::_getComputed($key)->resolver;
             return $this->$resolver();
         }
 
-        /**
-         * If the key corresponds to a defined column,
-         * return the stored attribute value or null if not set.
-         */
+        // If the key corresponds to a defined column,
+        // return the stored attribute value or null if not set.
         if (static::_hasColumn($key)) {
             return $this->_attributes[$key] ?? null;
         }
 
-        /**
-         * Otherwise, return the value from extras if present, or null.
-         */
+        // Otherwise, return the value from extras if present, or null.
         return $this->_extras[$key] ?? null;
     }
-
 
     /**
      * Magic setter to assign values to model properties dynamically.
@@ -583,11 +873,20 @@ abstract class Model
      * @param mixed $value The value to assign.
      * @return void
      */
-    public function __set($key, $value)
+    public function __set(string $key, mixed $value)
     {
         if (static::_hasColumn($key)) {
-            $this->_attributes[$key] = $value;
+            $column = static::_getColumn($key);
+            if (
+                $column->isPrimary
+                && !static::$selfAssignPrimaryKey
+                && $this->primaryKeyProtectionEnabled
+            ) {
+                // Prevent assignment
+                // TODO: Add logs/warn
+                return;
+            }
+            $this->_attributes[$column->property] = $value;
         }
     }
-
 }

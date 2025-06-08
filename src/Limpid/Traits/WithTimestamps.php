@@ -20,32 +20,59 @@ trait WithTimestamps
      * This will be automatically set on initial save.
      */
     #[Column]
-    public DateTime $createdAt;
+    public ?DateTime $createdAt = null;
 
     /**
      * The date and time when the model was last updated.
      * This will be automatically updated on every save.
      */
     #[Column]
-    public DateTime $updatedAt;
+    public ?DateTime $updatedAt = null;
 
     /**
-     * Hook triggered before saving the model to update timestamps.
+     * Hook method to set timestamps before creating a model.
      *
-     * - If the model is new (not persisted), sets createdAt and updatedAt.
-     * - If the model already exists, only updates updatedAt.
+     * This method is automatically called before a new model is created.
+     * It sets both the createdAt and updatedAt timestamps to the current date and time.
      *
-     * @param Model $model The model being saved (injected via the hook system)
+     * @param Model $model The model instance being created.
      */
-    #[Hook("beforeSave")]
-    protected function setTimestamps(Model $model)
+    #[Hook('beforeCreate')]
+    protected function createTimestamps(Model $model)
     {
-        if (!$model->isPersisted()) {
-            // New record: set creation timestamp
-            $model->createdAt = new DateTime();
-        }
+        $now = new DateTime();
+        $model->createdAt = $now;
+        $model->updatedAt = $now;
+    }
 
-        // Always update updatedAt, even for existing records
+    /**
+     * Hook method to update the updatedAt timestamp before updating a model.
+     *
+     * This method is automatically called before an existing model is updated.
+     * It updates the updatedAt timestamp to the current date and time.
+     *
+     * @param Model $model The model instance being updated.
+     */
+    #[Hook('beforeUpdate')]
+    protected function updateTimestamps(Model $model)
+    {
         $model->updatedAt = new DateTime();
+    }
+
+    /**
+     * Clears timestamp fields when the model is cloned.
+     *
+     * This hook is triggered on model cloning to reset the `createdAt` and `updatedAt` fields,
+     * ensuring the cloned instance does not retain timestamps from the original.
+     *
+     * @param Model $model The cloned model instance whose timestamps should be cleared.
+     * @return void
+     */
+    #[Hook('onClone')]
+    protected function clearTimestampsOnClone(Model $model)
+    {
+        // Clear timestamps when cloning a model
+        $model->createdAt = null;
+        $model->updatedAt = null;
     }
 }

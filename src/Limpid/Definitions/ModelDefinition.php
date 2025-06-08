@@ -19,13 +19,13 @@ class ModelDefinition
     public string $table;
 
     /**
-     * The table primary key
-     * @var string
+     * The primary key Column
+     * @var ColumnDefinition
      */
-    public string $primary = "id";
+    public ColumnDefinition $primary;
 
     /**
-     * Array of column metadata indexed by column name.
+     * Array of column metadata indexed by column property name.
      * @var array<string, ColumnDefinition>
      */
     public array $columns = [];
@@ -49,7 +49,7 @@ class ModelDefinition
      * Get the primary key
      * @return string
      */
-    public function getPrimary(): string
+    public function getPrimary(): ColumnDefinition
     {
         return $this->primary;
     }
@@ -79,7 +79,12 @@ class ModelDefinition
      */
     public function getColumn(string $name): ?ColumnDefinition
     {
-        return $this->columns[$name] ?? null;
+        foreach ($this->columns as $column) {
+            if ($column->name === $name || $column->property === $name) {
+                return $column;
+            }
+        }
+        return null;
     }
 
     /**
@@ -97,6 +102,16 @@ class ModelDefinition
      * @return string[]
      */
     public function getColumnsNames(): array
+    {
+        return array_values(array_map(fn($col) => $col->name, $this->columns));
+
+    }
+
+    /**
+     * Get the names of all defined properties that maps to a column.
+     * @return string[]
+     */
+    public function getColumnsPropertiesNames(): array
     {
         return array_keys($this->columns);
     }
@@ -117,7 +132,12 @@ class ModelDefinition
      */
     public function hasColumn(string $name): bool
     {
-        return array_key_exists($name, $this->columns);
+        foreach ($this->columns as $column) {
+            if ($column->name === $name || $column->property === $name) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

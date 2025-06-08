@@ -14,12 +14,16 @@ class App
     protected Config $config;
 
 
-    public function __construct()
+    public function __construct(?Container $container = null)
     {
         $this->config = new Config();
 
-        $this->container = new Container();
-        $this->registerServices();
+        if ($container) {
+            $this->container = $container;
+        } else {
+            $this->container = new Container();
+            $this->registerServices();
+        }
 
 
         $dsn = self::useConfig()->get('database.dsn');
@@ -52,7 +56,7 @@ class App
 
         // Register Database as sigleton
         $this->container->singleton('database', function ($container): \Potager\Limpid\Database {
-            return new \Potager\Limpid\Database();
+            return new \Potager\Limpid\Database($this->config->get('database'));
         });
 
         // Register Latte Engine
@@ -62,10 +66,10 @@ class App
     }
 
 
-    public static function getInstance(): App
+    public static function getInstance(?Container $container = null): App
     {
         if (self::$instance === null) {
-            self::$instance = new self();
+            self::$instance = new self($container);
         }
         return self::$instance;
     }
