@@ -21,6 +21,7 @@ export default defineConfig({
 				items: [
 					{ text: 'Models', link: '/basics/models' },
 					{ text: 'CRUD Operations', link: '/basics/crud-operations' },
+					{ text: 'Query Builder', link: '/basics/query-builder' },
 				],
 			},
 		],
