@@ -26,4 +26,9 @@ class Config
     {
         return Arr::get($this->config, $key, $default);
     }
+
+    public function toArray()
+    {
+        return $this->config;
+    }
 }
