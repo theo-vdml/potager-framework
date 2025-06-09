@@ -4,6 +4,7 @@ namespace Potager;
 
 use Potager\Container\Container;
 use Potager\Grape\Grape;
+use Potager\Limpid\Database;
 
 class App
 {
@@ -30,6 +31,7 @@ class App
         $user = $this->config->get('database.user');
         $password = $this->config->get('database.password');
         Grape::connectMySQL($dsn, $user, $password);
+        Database::initialize($this->config->get('database'));
     }
 
 
@@ -55,8 +57,9 @@ class App
         });
 
         // Register Database as sigleton
-        $this->container->singleton('database', function ($container): \Potager\Limpid\Database {
-            return new \Potager\Limpid\Database($this->config->get('database'));
+        $this->container->singleton('database', function ($container): Database {
+            $config = $this->config->get('database');
+            return Database::initialize($config);
         });
 
         // Register Latte Engine

@@ -17,7 +17,7 @@ class Database
 
     protected Connection $connection;
 
-    protected static Database $instance;
+    protected static ?Database $instance = null;
 
     /**
      * Database constructor.
@@ -26,7 +26,33 @@ class Database
     public function __construct(array $config)
     {
         $this->initializeConnection($config);
-        static::$instance = $this;
+    }
+
+    /**
+     * Initializes the Database instance with the given configuration.
+     *
+     * @param array $config
+     * @return Database
+     */
+    public static function initialize(array $config): Database
+    {
+        if (static::$instance === null) {
+            static::$instance = new self($config);
+        }
+        return static::$instance;
+    }
+
+    /**
+     * Get the singleton instance of the Database.
+     *
+     * @return Database
+     */
+    public static function getInstance(): Database
+    {
+        if (static::$instance === null) {
+            throw new \RuntimeException("Database instance not initialized.");
+        }
+        return static::$instance;
     }
 
     /**
@@ -96,7 +122,7 @@ class Database
      */
     public static function pdo(): \PDO
     {
-        return static::$instance->getPdo();
+        return static::getInstance()->getPdo();
     }
 
     /**
@@ -106,7 +132,7 @@ class Database
      */
     public static function connection(): Connection
     {
-        return static::$instance->getConnection();
+        return static::getInstance()->getConnection();
     }
 
     /**
@@ -116,7 +142,7 @@ class Database
      */
     public static function query(): QueryBuilderHandler
     {
-        $queryBuilder = static::$instance->connection->getQueryBuilder();
+        $queryBuilder = static::connection()->getQueryBuilder();
         return $queryBuilder;
     }
 
