@@ -10,10 +10,16 @@ use Potager\Auth\Contracts\AuthGuard;
 class Authenticator
 {
     /**
-     * Registered authentication guards.
-     * @var array<string, AuthGuard>
+     * Registered authentication guards builders.
+     * @var array<string, callable>
      */
     protected array $guards = [];
+
+    /**
+     * Cached instances of authentication guards.
+     * @var array<string, AuthGuard>
+     */
+    protected array $cachedGuards = [];
 
     /**
      * Default guard name.
@@ -42,6 +48,29 @@ class Authenticator
     protected $authenticatedUser = null;
 
     /**
+     * Create a new Authenticator instance.
+     *
+     * @param ?array{
+     *     guards?: array<string, callable>,
+     *     default?: string
+     * } $config Configuration array with guards and default guard name.
+     */
+    public function __construct(?array $config = null)
+    {
+        $config ??= [];
+        if (isset($config['guards']) && is_array($config['guards'])) {
+            foreach ($config['guards'] as $name => $guard) {
+                if (is_callable($guard)) {
+                    $this->registerGuard($name, $guard);
+                }
+            }
+        }
+        if (isset($config['default']) && is_string($config['default'])) {
+            $this->setDefaultGuard($config['default']);
+        }
+    }
+
+    /**
      * Get the default guard instance.
      *
      * @return AuthGuard The default guard.
@@ -61,7 +90,7 @@ class Authenticator
             throw new \RuntimeException("Default guard {$this->defaultGuard} is not a registered guard. Please register it first.");
         }
 
-        return $this->guards[$this->defaultGuard];
+        return $this->getGuard($this->defaultGuard);
     }
 
     /**
@@ -73,11 +102,16 @@ class Authenticator
      */
     public function getGuard(string $name): AuthGuard
     {
+        if (isset($this->cachedGuards[$name])) {
+            return $this->cachedGuards[$name];
+        }
+
         if (!isset($this->guards[$name])) {
             throw new \RuntimeException("Guard {$name} is not registered.");
         }
 
-        return $this->guards[$name];
+        $this->cachedGuards[$name] = $this->guards[$name]();
+        return $this->cachedGuards[$name];
     }
 
     /**
@@ -99,7 +133,7 @@ class Authenticator
      * @param AuthGuard $guard The guard instance.
      * @throws \RuntimeException If the guard is already registered.
      */
-    public function registerGuard(string $name, AuthGuard $guard): void
+    public function registerGuard(string $name, callable $guard): void
     {
         if (isset($this->guards[$name])) {
             throw new \RuntimeException("Guard {$name} is already registered.");
@@ -136,7 +170,7 @@ class Authenticator
             throw new \RuntimeException("Guard {$name} is not registered.");
         }
 
-        $this->guardToUse = $this->guards[$name];
+        $this->guardToUse = $this->getGuard($name);
         return $this;
     }
 
@@ -147,8 +181,10 @@ class Authenticator
      */
     public function login($user): void
     {
-        $this->getGuardToUse()->login($user);
+        $guard = $this->getGuardToUse();
+        $guard->login($user);
         $this->authenticatedUser = $user;
+        $this->authenticatedUsing = $guard;
     }
 
     /**
@@ -229,5 +265,28 @@ class Authenticator
     public function isAuthenticated(): bool
     {
         return $this->authenticatedUser !== null;
+    }
+
+    /**
+     * Reset the current authentication state.
+     *
+     * @return void
+     */
+    public function reset(): void
+    {
+        $this->authenticatedUser = null;
+        $this->authenticatedUsing = null;
+        $this->guardToUseName = null;
+    }
+
+    /**
+     * Check if a guard is registered.
+     *
+     * @param string $name The name of the guard.
+     * @return bool True if the guard is registered, false otherwise.
+     */
+    public function hasGuard(string $name): bool
+    {
+        return isset($this->guards[$name]);
     }
 }
