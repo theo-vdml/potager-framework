@@ -50,7 +50,7 @@ class App
         $this->container = $container ?? new Container();
         $this->registerMinimalServices();
         $dsn = $this->config->get('database.dsn');
-        $user = $this->config->get('database.user');
+        $user = $this->config->get('database.username');
         $password = $this->config->get('database.password');
         Grape::connectMySQL($dsn, $user, $password);
         Database::initialize($this->config->get('database'));
