@@ -26,9 +26,9 @@ class App
         }
 
 
-        $dsn = self::useConfig()->get('database.dsn');
-        $user = self::useConfig()->get('database.user');
-        $password = self::useConfig()->get('database.password');
+        $dsn = $this->config->get('database.dsn');
+        $user = $this->config->get('database.user');
+        $password = $this->config->get('database.password');
         Grape::connectMySQL($dsn, $user, $password);
     }
 
