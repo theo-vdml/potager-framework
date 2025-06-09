@@ -7,7 +7,7 @@ use Potager\Limpid\Database;
 use Potager\Test\Models\ModelWithAuthFinder as User;
 
 beforeEach(function () {
-    $this->db = new Database(['driver' => 'sqlite', 'database' => ':memory:']);
+    $this->db = new Database(['driver' => 'sqlite', 'database' => ':memory:'], true);
     $pdo = $this->db->getPdo();
 
     $pdo->exec('
@@ -18,12 +18,12 @@ beforeEach(function () {
         )
     ');
 
-    $this->auth = new Authenticator();
-    $this->auth->registerGuard('web', new SessionGuard(
-        userProvider: new LimpidUserProvider(
-            model: User::class
-        )
-    ));
+    $this->auth = new Authenticator([
+        'guards' => [
+            'web' => fn(): SessionGuard => new SessionGuard(userProvider: new LimpidUserProvider(model: User::class))
+        ],
+        'default' => 'web'
+    ]);
 });
 
 test('Authenticator can register and retrieve guards', function () {

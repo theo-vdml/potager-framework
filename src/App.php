@@ -2,31 +2,53 @@
 
 namespace Potager;
 
+use Potager\Auth\Authenticator;
 use Potager\Container\Container;
 use Potager\Grape\Grape;
 use Potager\Limpid\Database;
+use Potager\Mailer\MailManager;
+use Potager\Router\Router;
 
+/**
+ * Class App
+ *
+ * Main application class implementing a singleton pattern with service container.
+ *
+ * @method static Router useRouter()
+ * @method static Session useSession()
+ * @method static MailManager useMailer()
+ * @method static Database useDatabase()
+ * @method static LatteEngine useLatte()
+ * @method static Authenticator useAuth()
+ */
 class App
 {
-
+    /**
+     * @var ?App Singleton instance of the App
+     */
     protected static ?App $instance = null;
+
+    /**
+     * @var ?Container Service container instance
+     */
     protected ?Container $container = null;
 
+    /**
+     * @var Config Application configuration instance
+     */
     protected Config $config;
 
-
+    /**
+     * App constructor.
+     *
+     * @param Container|null $container Optional custom service container.
+     * @throws \Exception If container is needed but not set when registering services.
+     */
     public function __construct(?Container $container = null)
     {
         $this->config = new Config();
-
-        if ($container) {
-            $this->container = $container;
-        } else {
-            $this->container = new Container();
-            $this->registerServices();
-        }
-
-
+        $this->container = $container ?? new Container();
+        $this->registerMinimalServices();
         $dsn = $this->config->get('database.dsn');
         $user = $this->config->get('database.user');
         $password = $this->config->get('database.password');
@@ -34,41 +56,32 @@ class App
         Database::initialize($this->config->get('database'));
     }
 
-
-    protected function registerServices()
+    /**
+     * Registers the minimal required services as singletons if not already registered.
+     *
+     * @throws \Exception If container is not set.
+     * @return void
+     */
+    protected function registerMinimalServices()
     {
         if (!$this->container) {
             throw new \Exception("Cannot register services without a container set");
         }
 
-        // Register Router as singleton
-        $this->container->singleton('router', function ($container): \Potager\Router\Router {
-            return new \Potager\Router\Router();
-        });
-
-        // Register Session as singleton
-        $this->container->singleton('session', function ($container): \Potager\Session {
-            return new \Potager\Session();
-        });
-
-        // Register Mail Manager as singleton
-        $this->container->singleton('mailer', function ($container): \Potager\Mailer\MailManager {
-            return new \Potager\Mailer\MailManager();
-        });
-
-        // Register Database as sigleton
-        $this->container->singleton('database', function ($container): Database {
-            $config = $this->config->get('database');
-            return Database::initialize($config);
-        });
-
-        // Register Latte Engine
-        $this->container->bind('latteEngine', function ($container): \Potager\LatteEngine {
-            return new \Potager\LatteEngine();
-        });
+        $this->container->singletonIfNotExists('router', fn(): Router => new Router());
+        $this->container->singletonIfNotExists('session', fn(): Session => new Session());
+        $this->container->singletonIfNotExists('mailer', fn(): MailManager => new MailManager());
+        $this->container->singletonIfNotExists('database', fn(): Database => Database::initialize($this->config->get('database')));
+        $this->container->singletonIfNotExists('latte', fn(): LatteEngine => new \Potager\LatteEngine());
+        $this->container->singletonIfNotExists('auth', fn(): Authenticator => new Authenticator($this->config->get('auth')));
     }
 
-
+    /**
+     * Returns the singleton instance of the App.
+     *
+     * @param Container|null $container Optional container to initialize the app with.
+     * @return self
+     */
     public static function getInstance(?Container $container = null): App
     {
         if (self::$instance === null) {
@@ -77,69 +90,103 @@ class App
         return self::$instance;
     }
 
+    /**
+     * Get the service container instance.
+     *
+     * @return Container The service container.
+     */
+    public function getContainer(): Container
+    {
+        return $this->container;
+    }
+
+    /**
+     * Get the application configuration instance.
+     *
+     * @return Config The configuration object.
+     */
     public function getConfig(): Config
     {
         return $this->config;
     }
 
-    public function getDatabase(): \Potager\Limpid\Database
+    /**
+     * Bind a service to the container.
+     *
+     * @param string $service
+     * @param \Closure $builder
+     * @return void
+     * @throws \Exception If container is not set.
+     */
+    public function bind(string $service, \Closure $builer): void
     {
-        return $this->container->get('database');
+        if (!$this->container) {
+            throw new \Exception("Cannot register services without a container set");
+        }
+        $this->container->bind($service, $builer);
     }
 
-    public function getRouter(): \Potager\Router\Router
+    /**
+     * Bind a singleton service to the container.
+     *
+     * @param string $service
+     * @param \Closure $builder
+     * @return void
+     * @throws \Exception If container is not set.
+     */
+    public function singleton(string $service, \Closure $builer): void
     {
-        return $this->container->get('router');
+        if (!$this->container) {
+            throw new \Exception("Cannot register singleton without a container set");
+        }
+        $this->container->singleton($service, $builer);
     }
 
-    public function getMailer(): \Potager\Mailer\MailManager
+    /**
+     * Retrieve a service instance from the container.
+     *
+     * @param string $service
+     * @return mixed
+     * @throws \Exception If container is not set or service not found.
+     */
+    public function get(string $service): mixed
     {
-        return $this->container->get('mailer');
+        if (!$this->container) {
+            throw new \Exception("Cannot register services without a container set");
+        }
+        return $this->container->get($service);
     }
 
-    public function getSession(): Session
-    {
-        return $this->container->get('session');
-    }
-
-    public function getLatteEngine()
-    {
-        return $this->container->get('latteEngine');
-    }
-
-    public static function useApp()
-    {
-        return self::getInstance();
-    }
-
+    /**
+     * Get the Config instance.
+     *
+     * @return Config
+     */
     public static function useConfig(): Config
     {
-        return self::getInstance()->getConfig();
+        return static::getInstance()->getConfig();
     }
 
-    public static function useDatabase()
+    /**
+     * Magic method to allow static calls to useXyz() to fetch services.
+     *
+     * @param string $method
+     * @param array $args
+     * @return mixed
+     * @throws \BadMethodCallException If service or method is undefined.
+     */
+    public static function __callStatic($method, $args): mixed
     {
-        return self::getInstance()->getDatabase();
-    }
+        if (str_starts_with($method, 'use')) {
+            $service = lcfirst(substr($method, 3));
+            $instance = self::getInstance();
 
-    public static function useRouter()
-    {
-        return self::getInstance()->getRouter();
-    }
+            if (!$instance->container->has($service)) {
+                throw new \BadMethodCallException("Undefined service: {$service}");
+            }
 
-    public static function useMail()
-    {
-        return self::getInstance()->getMailer();
+            return $instance->container->get($service);
+        }
+        throw new \BadMethodCallException("Undefined static method {$method}");
     }
-
-    public static function useSession()
-    {
-        return self::getInstance()->getSession();
-    }
-
-    public static function useLatte()
-    {
-        return self::getInstance()->getLatteEngine();
-    }
-
 }

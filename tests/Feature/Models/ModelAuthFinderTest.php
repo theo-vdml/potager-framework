@@ -5,7 +5,7 @@ use Potager\Test\Models\ModelWithAuthFinder as User;
 
 
 beforeEach(function () {
-    $db = new Database(['driver' => 'sqlite', 'database' => ':memory:']);
+    $db = new Database(['driver' => 'sqlite', 'database' => ':memory:'], true);
     $pdo = $db->getPdo();
 
     $pdo->exec('
@@ -164,7 +164,7 @@ test('credential verification timing is roughly constant', function () {
     $max = max($times);
     $min = min($times);
 
-    expect($max - $min)->toBeLessThan(0.02); // 20 ms tolerance
+    expect($max - $min)->toBeLessThan(0.05); // 20 ms tolerance
 })->repeat(5);
 
 

@@ -23,9 +23,10 @@ class Database
      * Database constructor.
      * Initializes the Pixie database connection.
      */
-    public function __construct(array $config)
+    public function __construct(array $config, bool $saveAsInstance = false)
     {
         $this->initializeConnection($config);
+        static::$instance = $saveAsInstance ? $this : static::$instance;
     }
 
     /**

@@ -17,7 +17,7 @@ class Post extends Model
 }
 
 beforeEach(function () {
-    $db = new Database(['driver' => 'sqlite', 'database' => ':memory:']);
+    $db = new Database(['driver' => 'sqlite', 'database' => ':memory:'], true);
     $pdo = $db->getPdo();
 
     $pdo->exec('

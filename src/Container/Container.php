@@ -49,6 +49,34 @@ class Container
     }
 
     /**
+     * Binds a service name to a closure only if the service is not already registered.
+     *
+     * @param string $name The name of the service to bind.
+     * @param Closure $closure A closure that returns an instance of the service.
+     * @return void
+     */
+    public function bindIfNotExists(string $name, Closure $closure)
+    {
+        if (!$this->has($name)) {
+            $this->bind($name, $closure);
+        }
+    }
+
+    /**
+     * Binds a singleton service name to a closure only if the service is not already registered.
+     *
+     * @param string $name The name of the singleton service to bind.
+     * @param Closure $closure A closure that returns an instance of the service.
+     * @return void
+     */
+    public function singletonIfNotExists(string $name, Closure $closure)
+    {
+        if (!$this->has($name)) {
+            $this->singleton($name, $closure);
+        }
+    }
+
+    /**
      * Retrieves an instance of the specified service.
      *
      * @param string $name The name of the service to retrieve.
@@ -71,5 +99,16 @@ class Container
         }
 
         throw new Exception("The service '{$name}' is not registered in the container. Please ensure the service is correctly bound.");
+    }
+
+    /**
+     * Checks if a service is registered in the container.
+     *
+     * @param string $name The name of the service to check.
+     * @return bool True if the service is registered, false otherwise.
+     */
+    public function has(string $name): bool
+    {
+        return isset($this->services[$name]);
     }
 }

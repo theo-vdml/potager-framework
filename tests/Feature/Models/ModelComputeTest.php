@@ -37,7 +37,7 @@ beforeEach(function () {
     $db = new Database([
         'driver' => 'sqlite',
         'database' => ':memory:'
-    ]);
+    ], true);
 
     $pdo = $db->getPdo();
 
