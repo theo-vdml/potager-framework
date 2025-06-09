@@ -213,12 +213,24 @@ If no resolver is specified, Limpid will look for a method following the pattern
 
 Example:
 
-```php
-#[Computed]
-public string $fullName;
+```php{12-17}
+class User extends Model
+{
+    #[Column]
+    public ?int $id;
 
-public function computeFullName(): string {
-    return $this->firstName . ' ' . $this->lastName;
+    #[Column]
+    public ?string $firstName;
+
+    #[Column]
+    public ?string $lastName;
+
+    #[Computed]
+    public string $fullName;
+
+    public function computeFullName(): string {
+        return $this->firstName . ' ' . $this->lastName;
+    }
 }
 ```
 
@@ -229,11 +241,25 @@ public function computeFullName(): string {
 You can explicitly define the resolver method using the `resolver` parameter:
 
 ```php
-#[Computed(resolver: 'resolveFullName')]
-public string $fullName;
+class User extends Model
+{
+    #[Column]
+    public ?int $id;
 
-public function resolveFullName(): string {
-    return $this->firstName . ' ' . $this->lastName;
+    #[Column]
+    public ?string $firstName;
+
+    #[Column]
+    public ?string $lastName;
+
+    #[Computed] // [!code --]
+    #[Computed(resolver: 'resolveFullName')] // [!code ++]
+    public string $fullName;
+
+    public function computeFullName(): string { // [!code --]
+    public function resolveFullName(): string { // [!code ++]
+        return $this->firstName . ' ' . $this->lastName;
+    }
 }
 ```
 
@@ -255,7 +281,7 @@ For example, a model named `UserProfile` would map to the table `user_profiles`.
 
 If you want to explicitly specify a custom table name, you can use the `#[Table]` attribute on the class:
 
-```php
+```php{1}
 #[Table('user_table')]
 class User extends Model
 {
@@ -272,25 +298,35 @@ class User extends Model
 
 By default, Limpid expects the database to generate primary key values (e.g., auto-incrementing integers). If you prefer to assign primary keys yourself—such as using UUIDs—you can enable self-assignment by setting the following static property on your model:
 
-```php
-public static bool $selfAssignPrimaryKey = true;
+```php{3}
+class User extends Model
+{
+    public static bool $selfAssignPrimaryKey = true;
+
+    // ...
+}
 ```
 
 With this enabled, **you must manually set a value for the primary key** before persisting the model.
 
 To automate this, you can define a `beforeCreate` lifecycle hook in your model:
 
-```php
-#[Hook('beforeCreate')]
-public function setPrimaryKey(): void
+```php{7-11}
+class User extends Model
 {
-    $this->uuid = random_uuid();
+    public static bool $selfAssignPrimaryKey = true;
+
+    // ...
+
+    #[Hook('beforeCreate')]
+    public function setPrimaryKey(): void
+    {
+        $this->uuid = random_uuid();
+    }
 }
 ```
 
 > This is especially useful when using UUIDs or custom keys instead of relying on the database’s auto-increment behavior.
-
-Absolutely! Here's a refined and clearer version of your section, with an improved explanation and example:
 
 ### Manually Assigning a Primary Key (One-Time)
 
@@ -317,8 +353,6 @@ After assigning the value, you can re-enable the protection to avoid accidental 
 $user->enablePrimaryKeyProtection();
 ```
 
-Absolutely! Here's a rewritten and improved version of your **"Model Hooks"** section with clearer explanations, a polished example, and a structured table for available hooks:
-
 ## Model Hooks
 
 Model hooks allow you to attach logic to specific points in a model’s lifecycle. They’re a clean and centralized way to encapsulate behaviors—such as data transformation, logging, or validation—without scattering that logic across your application.
@@ -327,11 +361,24 @@ Hooks are defined as public, non-static methods on your model and registered usi
 
 Suppose you want to ensure passwords are always hashed before being saved to the database. You can do this using the `beforeSave` hook:
 
-```php
-#[Hook('beforeSave')]
-public function hashPasswordOnSave(User $user): void {
-    if ($user->isDirty('password')) {
-        $user->password = password_hash($user->password, PASSWORD_DEFAULT);
+```php{13-18}
+class User extends Model {
+    #[Column]
+    public int $id;
+
+    #[Column]
+    public string $email;
+
+    #[Column]
+    public string $password;
+
+    // ...
+
+    #[Hook('beforeSave')]
+    public function hashPasswordOnSave(User $user): void {
+        if ($user->isDirty('password')) {
+            $user->password = password_hash($user->password, PASSWORD_DEFAULT);
+        }
     }
 }
 ```
@@ -349,3 +396,37 @@ public function hashPasswordOnSave(User $user): void {
 | `beforeUpdate` | Called before an existing model is updated.                                | `Model $model` |
 | `afterUpdate`  | Called after an existing model has been updated.                           | `Model $model` |
 | `onClone`      | Invoked when the model is cloned. Useful for resetting or cleaning fields. | `Model $model` |
+
+## Automatic Timestamp Management
+
+Limpid provides built-in support for managing timestamps on your models—automatically and without any additional configuration. When enabled, it will automatically set the `created_at` and `updated_at` columns whenever a model is created or updated.
+
+To use this feature, simply ensure that your database table includes the `created_at` and `updated_at` columns (typically defined in your migrations), then apply the `WithTimestamps` trait to your model:
+
+```php{2,5}
+use Potager\Limpid\Model;
+use Potager\Limpid\Traits\WithTimestamps;
+
+class User extends Model {
+    use WithTimestamps;
+
+    #[Column]
+    public int $id;
+
+    #[Column]
+    public string $name;
+
+    #[Column]
+    public string $email;
+}
+```
+
+Once configured, Limpid will automatically handle the timestamps for you. You can access the timestamp values using camelCase property names:
+
+```php{2,3}
+$user = User::find(1);
+echo $user->createdAt; // Outputs the creation timestamp
+echo $user->updatedAt; // Outputs the last update timestamp
+```
+
+> **Note:** The `created_at` and `updated_at` columns must be of type `DATETIME` or `TIMESTAMP` in your database schema. Limpid will map these columns to the `createdAt` and `updatedAt` properties on your model automatically.
