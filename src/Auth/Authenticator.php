@@ -2,6 +2,7 @@
 
 namespace Potager\Auth;
 
+use Exception;
 use Potager\Auth\Contracts\AuthGuard;
 
 /**
@@ -204,33 +205,30 @@ class Authenticator
      * @return mixed The authenticated user.
      * @throws \RuntimeException If no user is authenticated.
      */
-    public function authenticate(): mixed
+    public function authenticate(): void
     {
-        $user = $this->authenticateQuietly();
+        $guard = $this->getGuardToUse();
+        $user = $guard->user();
         if ($user === null) {
-            throw new \RuntimeException('No user is authenticated.');
+            throw new Exception('Access Denied');
         }
-        return $this->authenticatedUser;
+        $this->authenticatedUsing = $guard;
+        $this->authenticatedUser = $user;
     }
 
     /**
      * Attempt to authenticate the user quietly without throwing exceptions.
      *
-     * @return mixed|null The authenticated user or null if authentication fails.
+     * @return bool 
      */
-    public function authenticateQuietly(): mixed
+    public function check(): bool
     {
-        if ($this->authenticatedUser !== null) {
-            return $this->authenticatedUser; // Already authenticated
+        try {
+            $this->authenticate();
+            return true;
+        } catch (Exception $e) {
+            return false;
         }
-        $guard = $this->getGuardToUse();
-        $user = $guard->user();
-        if ($user === null) {
-            return null;
-        }
-        $this->authenticatedUser = $user;
-        $this->authenticatedUsing = $guard;
-        return $this->authenticatedUser;
     }
 
     /**
