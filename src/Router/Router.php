@@ -2,6 +2,7 @@
 
 namespace Potager\Router;
 
+use Potager\App;
 use Potager\Exceptions\HttpException;
 use Potager\View;
 use Exception;
@@ -138,6 +139,7 @@ class Router
 		}
 		// If the controller returned a instance of a View, it should prior to any other values
 		elseif ($controllerResult instanceof View) {
+			$controllerResult->with("auth", App::useAuth());
 			$response->send($controllerResult->render());
 		}
 		// If the controller returned a raw value, it should be used as the body of the response
