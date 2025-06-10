@@ -9,8 +9,6 @@ use Throwable;
 
 class Router
 {
-
-
 	// Array to hold all the routes
 	protected $routes = [];
 
@@ -112,27 +110,21 @@ class Router
 	{
 		$middlewares = $route->getMiddlewares();
 
-		foreach ($middlewares as $middleware) {
-			$middlewareResult = $middleware($context);
-			if ($middlewareResult instanceof Abord) {
-				// Abord the navigation
-			} else if ($middlewareResult instanceof Redirect) {
-				// Redirect to another location
-				$path = $middlewareResult->getPath();
-				header("Location: {$path}", true, 302);
-				exit; // Stop the script after redirection
-			}
+		$controller = function (HttpContext $ctx) use ($route) {
+			[$controller, $action] = $route->getAction();
+			return (new $controller())->$action($ctx);
+		};
+
+		$pipeline = array_reverse($middlewares);
+		$next = $controller;
+		foreach ($pipeline as $middleware) {
+			$prev = $next;
+			$next = fn() => $middleware($context, $prev);
 		}
 
-		// Get the controller and the action from the route and call it
-		[$controller, $action] = $route->getAction();
-		$controllerOutput = (new $controller())->$action($context);
-
-		// Handle the controller result
-		$response = $this->resolveControllerOutput($controllerOutput, $context->response());
-
+		$output = $next();
+		$response = $this->resolveControllerOutput($output, $context->response());
 		$this->sendResponse($response);
-
 		exit;
 	}
 
@@ -168,19 +160,11 @@ class Router
 			header("$name: $value");
 		}
 
-
 		// Set the status code
 		http_response_code($response->getStatus());
 
 		// return the response body
 		echo $response->getBody();
-
-	}
-
-	protected function handleView(View $view)
-	{
-		$view->render();
-		exit;
 	}
 
 	protected function exceptionHandler(Throwable $e, HttpContext $ctx)
@@ -267,38 +251,4 @@ class Router
 			'highlight' => $line - $start,
 		];
 	}
-
-
-
-	// protected function handleException(Exception $e)
-	// {
-	// 	$code = $e->getCode() !== 0 ? $e->getCode() : 500;
-	// 	$message = $e->getMessage();
-	// 	$trace = $e->getTraceAsString();
-
-	// 	$acceptHeader = isset($_SERVER['HTTP_ACCEPT']) ? $_SERVER['HTTP_ACCEPT'] : 'text/html';
-
-	// 	http_response_code($code);
-
-	// 	if (strpos($acceptHeader, 'application/json') !== false) {
-	// 		header('Content-Type: application/json');
-	// 		$response = ['error' => true, 'message' => $message, 'status' => $code];
-	// 		echo json_encode($response);
-	// 	} else {
-	// 		header('Content-Type: text/html');
-	// 		$errorPagePath = __DIR__ . "/../../app/{$code}.php";
-	// 		$fallbackErrorPath = __DIR__ . "/../../app/error.php";
-
-	// 		if (file_exists($errorPagePath)) {
-	// 			include $errorPagePath;
-	// 		} elseif (file_exists($fallbackErrorPath)) {
-	// 			include $fallbackErrorPath;
-	// 		} else {
-	// 			echo "<h1>{$code}</h1><p>{$message}</p>";
-	// 			echo "<pre>{$trace}</pre>";
-	// 		}
-	// 	}
-
-	// 	exit;
-	// }
 }
