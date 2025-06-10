@@ -110,9 +110,11 @@ class Router
 	{
 		$middlewares = $route->getMiddlewares();
 
-		$controller = function (HttpContext $ctx) use ($route) {
+		$output = null;
+
+		$controller = function () use ($route, $context, &$output) {
 			[$controller, $action] = $route->getAction();
-			return (new $controller())->$action($ctx);
+			$output = (new $controller())->$action($context);
 		};
 
 		$pipeline = array_reverse($middlewares);
@@ -122,7 +124,7 @@ class Router
 			$next = fn() => $middleware($context, $prev);
 		}
 
-		$output = $next();
+		$next();
 		$response = $this->resolveControllerOutput($output, $context->response());
 		$this->sendResponse($response);
 		exit;
