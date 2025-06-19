@@ -23,6 +23,7 @@ tmp/
 /phpunit.xml
 /phpunit.xml.dist
 /test-results/
+/coverage
 
 # Build / dist
 /build/
