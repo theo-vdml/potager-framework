@@ -2,113 +2,339 @@
 
 namespace Potager\Container;
 
-use Closure;
 use Exception;
+use Potager\Container\Exceptions\ContainerException;
+use Potager\Container\Exceptions\NotFoundException;
+use Psr\Container\ContainerInterface;
+use ReflectionClass;
+use ReflectionFunction;
+use ReflectionMethod;
+use ReflectionNamedType;
+use Throwable;
 
 /**
  * Class Container
  *
- * A simple dependency injection container that manages class dependencies and their instantiations.
+ * A lightweight and flexible dependency injection container.
+ *
+ * Supports binding of services via closures, singleton registration, autowiring
+ * via reflection, and PSR-11 compliance (get/has methods).
+ *
+ * Provides:
+ * - Manual binding of services (singleton or not)
+ * - Automatic resolution of dependencies through constructors and callable injection
+ * - Method/function call with automatic dependency injection
+ * - Service retrieval via PSR-11 `get()` and `has()`
  */
-class Container
+class Container implements ContainerInterface
 {
     /**
-     * @var array
-     * Stores the closures for creating service instances.
+     * Array of service bindings (non-instantiated factories).
+     *
+     * @var array<string, callable>
      */
-    protected $services = [];
+    protected $bindings = [];
 
     /**
-     * @var array
-     * Stores the singleton instances of services.
+     * Array of singleton instances or placeholders (null before instantiation).
+     *
+     * @var array<string, object|null>
      */
     protected $instances = [];
 
     /**
-     * Binds a service name to a closure that can create an instance of the service.
+     * Register a service binding (non-singleton).
      *
-     * @param string $name The name of the service to bind.
-     * @param Closure $closure A closure that returns an instance of the service.
-     */
-    public function bind(string $name, Closure $closure)
-    {
-        $this->services[$name] = $closure;
-    }
-
-    /**
-     * Binds a singleton service name to a closure.
-     * The service instance will be created only once and reused on subsequent calls.
-     *
-     * @param string $name The name of the singleton service to bind.
-     * @param Closure $closure A closure that returns an instance of the service.
-     */
-    public function singleton(string $name, Closure $closure)
-    {
-        $this->services[$name] = $closure;
-        $this->instances[$name] = null;
-    }
-
-    /**
-     * Binds a service name to a closure only if the service is not already registered.
-     *
-     * @param string $name The name of the service to bind.
-     * @param Closure $closure A closure that returns an instance of the service.
+     * @param string $id Identifier for the service.
+     * @param callable $closure A factory that returns the service instance.
      * @return void
      */
-    public function bindIfNotExists(string $name, Closure $closure)
+    public function bind(string $id, callable $closure)
     {
-        if (!$this->has($name)) {
-            $this->bind($name, $closure);
-        }
+        $this->bindings[$id] = $closure;
     }
 
     /**
-     * Binds a singleton service name to a closure only if the service is not already registered.
+     * Register a singleton service binding (lazy-loaded).
      *
-     * @param string $name The name of the singleton service to bind.
-     * @param Closure $closure A closure that returns an instance of the service.
+     * @param string $id Identifier for the service.
+     * @param callable $closure A factory that returns the service instance.
      * @return void
      */
-    public function singletonIfNotExists(string $name, Closure $closure)
+    public function singleton(string $id, callable $closure)
     {
-        if (!$this->has($name)) {
-            $this->singleton($name, $closure);
+        $this->bindings[$id] = $closure;
+        $this->instances[$id] = null;
+    }
+
+    /**
+     * Register an already instantiated object as a singleton.
+     *
+     * @param string $id Identifier for the service.
+     * @param object $instance The concrete instance to use.
+     * @return void
+     */
+    public function instance(string $id, object $instance): void
+    {
+        $this->instances[$id] = $instance;
+    }
+
+    /**
+     * Register a non-singleton binding only if not already registered.
+     *
+     * @param string $id Identifier for the service.
+     * @param callable $closure A factory for the service.
+     * @return void
+     */
+    public function bindIfNotExists(string $id, callable $closure)
+    {
+        if (!$this->has($id)) {
+            $this->bind($id, $closure);
         }
     }
 
     /**
-     * Retrieves an instance of the specified service.
+     * Register a singleton binding only if not already registered.
      *
-     * @param string $name The name of the service to retrieve.
-     * @return mixed The instance of the requested service.
-     * @throws Exception If the service is not registered in the container.
+     * @param string $id Identifier for the service.
+     * @param callable $closure A factory for the singleton service.
+     * @return void
      */
-    public function get(string $name)
+    public function singletonIfNotExists(string $id, callable $closure)
     {
-        if (isset($this->instances[$name])) {
-            return $this->instances[$name];
+        if (!$this->has($id)) {
+            $this->singleton($id, $closure);
         }
+    }
 
-        if (isset($this->services[$name])) {
-            $service = $this->services[$name];
-            $instance = $service($this);
-            if (array_key_exists($name, $this->instances)) {
-                $this->instances[$name] = $instance;
+    /**
+     * Register an instance only if not already registered.
+     *
+     * @param string $id Identifier for the service.
+     * @param object $instance The service instance.
+     * @return void
+     */
+    public function instanceIfNotExists(string $id, object $instance): void
+    {
+        if (!$this->has($id)) {
+            $this->instances[$id] = $instance;
+        }
+    }
+
+
+
+    /**
+     * Resolve and instantiate a service or call its registered factory.
+     *
+     * - Checks singleton registry
+     * - Calls binding factory if registered
+     * - Autowires via constructor if class exists
+     *
+     * @param string $id Service identifier or class name.
+     * @param array $parameters Optional named parameters to override autowiring.
+     * @return object Instantiated service.
+     *
+     * @throws NotFoundException If the service is not found or class does not exist.
+     * @throws ContainerException On resolution or instantiation failure.
+     */
+    public function make(string $id, array $parameters = []): mixed
+    {
+        try {
+            if (array_key_exists($id, $this->instances) && $this->instances[$id] !== null) {
+                return $this->instances[$id];
             }
-            return $instance;
-        }
 
-        throw new Exception("The service '{$name}' is not registered in the container. Please ensure the service is correctly bound.");
+            if (array_key_exists($id, $this->bindings)) {
+                $object = $this->callFactory($this->bindings[$id], $parameters);
+
+                if (array_key_exists($id, $this->instances)) {
+                    $this->instances[$id] = $object;
+                }
+
+                return $object;
+            }
+
+            if (class_exists($id)) {
+                $object = $this->resolve($id, $parameters);
+
+                return $object;
+            }
+
+            throw new NotFoundException("Service '{$id}' was not found in the container.");
+        } catch (NotFoundException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            throw new ContainerException("Failed to resolve service '{$id}'. Reason: " . $e->getMessage(), 0, $e);
+        }
     }
 
     /**
-     * Checks if a service is registered in the container.
+     * Retrieve a service instance (PSR-11 compliant).
      *
-     * @param string $name The name of the service to check.
-     * @return bool True if the service is registered, false otherwise.
+     * Alias to `make()`.
+     *
+     * @param string $id The identifier of the entry to retrieve.
+     * @return object The resolved service instance.
+     *
+     * @throws NotFoundException If the service is not found.
+     * @throws ContainerException If an error occurs while resolving the service.
      */
-    public function has(string $name): bool
+    public function get(string $id): object
     {
-        return isset($this->services[$name]);
+        return $this->make($id);
+    }
+
+    /**
+     * Check if a service is registered in bindings or instances.
+     *
+     * @param string $id Service identifier.
+     * @return bool True if the service is bound or already instantiated.
+     */
+    public function has(string $id): bool
+    {
+        return array_key_exists($id, $this->bindings) || array_key_exists($id, $this->instances);
+    }
+
+    /**
+     * Call a callable (closure, function, or method) with automatic dependency injection.
+     *
+     * Parameters are resolved by name, type-hint, or default values.
+     *
+     * @param callable $callable The function or method to call.
+     * @param array $parameters Optional named arguments to override autowiring.
+     * @return mixed The result of the callable.
+     *
+     * @throws ContainerException If parameter resolution fails or callable cannot be invoked.
+     */
+    public function call(callable $callable, array $parameters = [])
+    {
+
+        if (is_array($callable) && count($callable) === 2) {
+            // Méthode d'objet ou statique [object|string, method]
+            $reflector = new ReflectionMethod($callable[0], $callable[1]);
+        } elseif (is_string($callable) && strpos($callable, '::') !== false) {
+            // Méthode statique sous forme "Class::method"
+            $reflector = new ReflectionMethod($callable);
+        } else {
+            // Fonction globale ou closure
+            $reflector = new ReflectionFunction($callable);
+        }
+
+        $args = $this->resolveParameters($parameters, $reflector->getParameters());
+
+        return call_user_func_array($callable, $args);
+    }
+
+    /**
+     * Internally invokes a service factory with resolved parameters.
+     *
+     * Used for bindings and singleton creation.
+     *
+     * @param callable $factory Factory callable to invoke.
+     * @param array $parameters Optional named arguments to override autowiring.
+     * @return object The result of the factory.
+     *
+     * @throws ContainerException If the factory cannot be called.
+     */
+    protected function callFactory(callable $factory, array $parameters = [])
+    {
+        try {
+            if (is_array($factory)) {
+                $reflector = new ReflectionMethod($factory[0], $factory[1]);
+            } elseif (is_string($factory) && strpos($factory, '::') !== false) {
+                $reflector = new ReflectionMethod($factory);
+            } else {
+                $reflector = new ReflectionFunction($factory);
+            }
+
+            $args = $args = $this->resolveParameters($parameters, $reflector->getParameters());
+
+            return call_user_func_array($factory, $args);
+        } catch (Throwable $e) {
+            throw new ContainerException("Failed to call factory for service. Reason: " . $e->getMessage(), 0, $e);
+        }
+    }
+
+    /**
+     * Resolve a class via reflection and constructor injection.
+     *
+     * @param string $class Fully qualified class name.
+     * @param array $parameters Optional named parameters to override autowiring.
+     * @return object Instantiated class.
+     *
+     * @throws ContainerException If the class cannot be instantiated.
+     */
+    protected function resolve(string $class, array $parameters = [])
+    {
+        try {
+            $reflector = new ReflectionClass($class);
+
+            if (!$reflector->isInstantiable()) {
+                throw new Exception("Class '{$class}' is not instantiable.");
+            }
+
+            $constructor = $reflector->getConstructor();
+
+            if ($constructor === null) {
+                return new $class();
+            }
+
+            $args = $this->resolveParameters($parameters, $constructor->getParameters());
+
+            return $reflector->newInstanceArgs($args);
+        } catch (Throwable $e) {
+            throw new ContainerException("Failed to instantiate class '{$class}'. Reason: " . $e->getMessage(), 0, $e);
+        }
+    }
+
+    /**
+     * Resolve constructor or callable parameters via type hint, provided input, or default.
+     *
+     * @param array $parameters User-supplied named arguments.
+     * @param array $reflectedParams Parameters from reflection.
+     * @return array List of resolved arguments to pass to callable.
+     *
+     * @throws ContainerException If any parameter cannot be resolved.
+     */
+    protected function resolveParameters(array $parameters, array $reflectedParams): array
+    {
+        $args = [];
+
+        foreach ($reflectedParams as $param) {
+            $name = $param->getName();
+            $type = $param->getType();
+
+            // Parameter explicitly provided by name
+            if (array_key_exists($name, $parameters)) {
+                $args[] = $parameters[$name];
+                continue;
+            }
+
+            // Parameter has a class/interface type hint
+            if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
+                $typeName = $type->getName();
+
+                // Automatically inject the container itself
+                if ($typeName === self::class || $typeName === ContainerInterface::class || is_subclass_of($this, $typeName)) {
+                    $args[] = $this;
+                    continue;
+                }
+
+                // Resolve the dependency using the container
+                $args[] = $this->make($typeName);
+                continue;
+            }
+
+            // Use default value if available
+            if ($param->isDefaultValueAvailable()) {
+                $args[] = $param->getDefaultValue();
+                continue;
+            }
+
+            // Could not resolve the parameter
+            throw new ContainerException("Unable to resolve parameter '{$name}' with no default value and no type hint.");
+        }
+
+        return $args;
     }
 }
