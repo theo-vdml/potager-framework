@@ -24,7 +24,9 @@
         "ext-pdo": "*",
         "latte/latte": "^3.0",
         "vlucas/phpdotenv": "^5.6",
-        "potager/pixie": "dev-master"
+        "potager/pixie": "dev-master",
+        "scrivo/highlight.php": "^9.18",
+        "theovdml/doh": "^1.0"
     },
     "require-dev": {
         "pestphp/pest": "^3.8"
