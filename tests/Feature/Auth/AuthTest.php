@@ -22,7 +22,6 @@ beforeEach(function () {
         'guards' => [
             'web' => fn(): SessionGuard => new SessionGuard(userProvider: new LimpidUserProvider(model: User::class))
         ],
-        'default' => 'web'
     ]);
 });
 
@@ -97,6 +96,17 @@ test('Authenticator can set default guard', function () {
     expect($this->auth->getGuardToUse())->toBeInstanceOf(SessionGuard::class);
 });
 
+test('Authenticator use the only defined guard if not default set', function () {
+    expect($this->auth->getGuardToUse())->toBeInstanceOf(SessionGuard::class);
+});
+
+test('Authenticator throws exception if default guard cannot be resolved', function () {
+    $this->auth->setDefaultGuard('non_existing_guard', true);
+
+    // Essayer de récupérer ce guard doit lancer une exception
+    $this->auth->getGuardToUse();
+})->throws(RuntimeException::class);
+
 test('Authenticator can use a specific guard for operations', function () {
     $user = new User();
     $user->email = 'bob@mail.net';
@@ -106,3 +116,7 @@ test('Authenticator can use a specific guard for operations', function () {
     expect($this->auth->isAuthenticated())->toBeTrue();
 });
 
+test('Authenticator hasGuard', function () {
+    expect($this->auth->hasGuard('web'))->toBeTrue();
+    expect($this->auth->hasGuard('non_existing_guard'))->toBeFalse();
+});

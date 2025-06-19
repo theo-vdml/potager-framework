@@ -147,11 +147,12 @@ class Authenticator
      * Set the default guard.
      *
      * @param string $name The name of the guard to set as default.
+     * @param bool $force Force the default guard even if not yet registered (default: false)
      * @throws \RuntimeException If the guard is not registered.
      */
-    public function setDefaultGuard(string $name): void
+    public function setDefaultGuard(string $name, bool $force = false): void
     {
-        if (!isset($this->guards[$name])) {
+        if (!$force && !isset($this->guards[$name])) {
             throw new \RuntimeException("Guard {$name} is not registered.");
         }
 
