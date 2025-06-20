@@ -12,13 +12,17 @@ class HttpException extends Exception
         404 => 'Not Found',
         405 => 'Method Not Allowed',
         408 => 'Request Timeout',
+        418 => 'I\'m a teapot',
         429 => 'Too Many Requests',
         500 => 'Internal Server Error',
     ];
 
-    public function __construct(int $code = 500, ?string $message = null)
+    protected array $headers;
+
+    public function __construct(int $code = 500, ?string $message = null, array $headers = [])
     {
         $message ??= self::$defaultMessages[$code] ?? 'Unknown Error';
         parent::__construct($message, $code);
+        $this->headers = $headers;
     }
 }
