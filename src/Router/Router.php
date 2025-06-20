@@ -3,6 +3,7 @@
 namespace Potager\Router;
 
 use Potager\App;
+use Potager\Container\Container;
 use Potager\Exceptions\HttpException;
 use Potager\View;
 use Exception;
@@ -10,8 +11,16 @@ use Throwable;
 
 class Router
 {
+
 	// Array to hold all the routes
-	protected $routes = [];
+	protected array $routes = [];
+
+	protected Container $container;
+
+	public function __construct(Container $container)
+	{
+		$this->container = $container;
+	}
 
 	/**
 	 * =================================
@@ -88,23 +97,19 @@ class Router
 
 	public function handleRequest()
 	{
-		$request = new Request();
-		$response = new Response($this);
-		$context = new HttpContext($request, $response);
-		try {
-			$uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-			$method = $_SERVER['REQUEST_METHOD'];
-			foreach ($this->routes as $route) {
-				if ($route->match($method, $uri)) {
-					$request->attachRoute($route);
-					$this->invokeController($route, $context);
-					exit;
-				}
+		$context = $this->container->make(HttpContext::class);
+		$request = $context->request();
+
+		$uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+		$method = $_SERVER['REQUEST_METHOD'];
+		foreach ($this->routes as $route) {
+			if ($route->match($method, $uri)) {
+				$request->attachRoute($route);
+				$this->invokeController($route, $context);
 			}
-			throw new HttpException(404);
-		} catch (Throwable $e) {
-			$this->exceptionHandler($e, $context);
 		}
+		throw new HttpException(404);
+
 	}
 
 	protected function invokeController(Route $route, HttpContext $context)
@@ -113,7 +118,7 @@ class Router
 
 		$output = null;
 
-		$controller = function () use ($route, $context, &$output) {
+		$controller = function () use ($route, $context, &$output): void {
 			[$controller, $action] = $route->getAction();
 			$output = (new $controller())->$action($context);
 		};
@@ -122,7 +127,7 @@ class Router
 		$next = $controller;
 		foreach ($pipeline as $middleware) {
 			$prev = $next;
-			$next = fn() => $middleware($context, $prev);
+			$next = fn(): mixed => $middleware($context, $prev);
 		}
 
 		$next();
@@ -131,7 +136,7 @@ class Router
 		exit;
 	}
 
-	protected function resolveControllerOutput(mixed $controllerResult, Response $response)
+	protected function resolveControllerOutput(mixed $controllerResult, Response $response): Response
 	{
 		// If the controller returned a instance of Reponse, it should prior to the default $reponse object
 		if ($controllerResult instanceof Response) {
@@ -169,90 +174,5 @@ class Router
 
 		// return the response body
 		echo $response->getBody();
-	}
-
-	protected function exceptionHandler(Throwable $e, HttpContext $ctx)
-	{
-		if ($e instanceof HttpException) {
-			$this->handleHttpException($e, $ctx);
-		} else {
-			$this->handleException($e, $ctx);
-		}
-	}
-
-	protected function handleHttpException(HttpException $e, HttpContext $ctx)
-	{
-		$code = $e->getCode();
-		$message = $e->getMessage();
-
-		http_response_code($code);
-		$best = $ctx->request()->negociate(['application/json', 'text/html']);
-		switch ($best) {
-			case 'application/json':
-				header('Content-Type: application/json');
-				$response = ['error' => true, 'message' => $message, 'status' => $code];
-				echo json_encode($response);
-				break;
-			case 'text/html':
-				header('Content-Type: text/html');
-				$custom_error_file = __DIR__ . "/../../app/{$code}.php";
-				if (file_exists($custom_error_file)) {
-					include $custom_error_file;
-				} else {
-					include __DIR__ . '/default/http_exception.php';
-				}
-				break;
-			default:
-				header('Content-Type: text/plain');
-				echo "Error {$code}: {$message}";
-				break;
-		}
-		exit;
-	}
-
-	protected function handleException(Throwable $e, HttpContext $ctx)
-	{
-		$class = get_class($e);
-		$message = $e->getMessage();
-		$trace = $e->getTraceAsString();
-		$file = $e->getFile();
-		$line = $e->getLine();
-		$excerpt = $this->getFileExcerpt($file, $line);
-
-		http_response_code(500);
-		$best = $ctx->request()->negociate(['application/json', 'text/html']);
-		switch ($best) {
-			case 'application/json':
-				header('Content-Type: application/json');
-				$response = ['error' => true, 'message' => $message, 'status' => 500, 'trace' => $trace, 'file' => $file, 'line' => $line];
-				echo json_encode($response);
-				break;
-			case 'text/html':
-				header('Content-Type: text/html');
-				include __DIR__ . '/default/exception.php';
-				break;
-			default:
-				header('Content-Type: text/plain');
-				echo "Internal Server Error : {$message}";
-				break;
-		}
-		exit;
-	}
-
-	protected function getFileExcerpt(string $file, int $line, int $padding = 10): array
-	{
-		if (!is_readable($file))
-			return ['excerpt' => 'Cannot read source file.', 'start' => 0, 'highlight' => $line];
-
-		$lines = file($file);
-		$start = max(0, $line - $padding - 1);
-		$end = min(count($lines), $line + $padding);
-
-		$excerpt = array_slice($lines, $start, $end - $start, true);
-		return [
-			'excerpt' => array_map(fn($l) => htmlspecialchars($l), $excerpt),
-			'start' => $start + 1,
-			'highlight' => $line - $start,
-		];
 	}
 }
