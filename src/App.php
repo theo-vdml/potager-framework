@@ -68,7 +68,7 @@ class App
             throw new \Exception("Cannot register services without a container set");
         }
 
-        $this->container->singletonIfNotExists('router', fn(): Router => new Router());
+        $this->container->singletonIfNotExists(Router::class, fn(): Router => new Router($this->container));
         $this->container->singletonIfNotExists('session', fn(): Session => new Session());
         $this->container->singletonIfNotExists('mailer', fn(): MailManager => new MailManager());
         $this->container->singletonIfNotExists('database', fn(): Database => Database::initialize($this->config->get('database')));
@@ -127,37 +127,6 @@ class App
     }
 
     /**
-     * Bind a singleton service to the container.
-     *
-     * @param string $service
-     * @param \Closure $builder
-     * @return void
-     * @throws \Exception If container is not set.
-     */
-    public function singleton(string $service, \Closure $builer): void
-    {
-        if (!$this->container) {
-            throw new \Exception("Cannot register singleton without a container set");
-        }
-        $this->container->singleton($service, $builer);
-    }
-
-    /**
-     * Retrieve a service instance from the container.
-     *
-     * @param string $service
-     * @return mixed
-     * @throws \Exception If container is not set or service not found.
-     */
-    public function get(string $service): mixed
-    {
-        if (!$this->container) {
-            throw new \Exception("Cannot register services without a container set");
-        }
-        return $this->container->get($service);
-    }
-
-    /**
      * Get the Config instance.
      *
      * @return Config
@@ -165,6 +134,12 @@ class App
     public static function useConfig(): Config
     {
         return static::getInstance()->getConfig();
+    }
+
+    public static function useRouter(): Router
+    {
+        $container = static::getInstance()->getContainer();
+        return $container->make(Router::class);
     }
 
     /**
